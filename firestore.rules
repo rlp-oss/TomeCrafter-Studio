@@ -1,0 +1,217 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'codygermain032@gmail.com'
+      );
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['id', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'preferredGenre', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == userId
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 320
+        && data.email == request.auth.token.email
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2048))
+        && (!('preferredGenre' in data) || (data.preferredGenre is string && data.preferredGenre.size() <= 80))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBook(data, bookId) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'author', 'genre', 'targetWordCount', 'currentWordCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'title', 'subtitle', 'author', 'genre', 'tone',
+          'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
+          'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
+          'chapters', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
+          'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == bookId
+        && isValidId(data.userId)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && (!('subtitle' in data) || (data.subtitle is string && data.subtitle.size() <= 300))
+        && data.author is string && data.author.size() >= 1 && data.author.size() <= 120
+        && data.genre is string && data.genre.size() >= 1 && data.genre.size() <= 80
+        && (!('tone' in data) || (data.tone is string && data.tone.size() <= 240))
+        && data.targetWordCount is number && data.targetWordCount >= 0 && data.targetWordCount <= 10000000
+        && data.currentWordCount is number && data.currentWordCount >= 0 && data.currentWordCount <= 10000000
+        && (!('premise' in data) || (data.premise is string && data.premise.size() <= 8000))
+        && (!('targetAudience' in data) || (data.targetAudience is string && data.targetAudience.size() <= 200))
+        && (!('coverImageUrl' in data) || (data.coverImageUrl is string && data.coverImageUrl.size() <= 500000))
+        && (!('coverImage' in data) || (data.coverImage is string && data.coverImage.size() <= 500000))
+        && (!('frontCoverImage' in data) || (data.frontCoverImage is string && data.frontCoverImage.size() <= 500000))
+        && (!('coverTitleFont' in data) || (data.coverTitleFont is string && data.coverTitleFont.size() <= 80))
+        && (!('coverAccentColor' in data) || (data.coverAccentColor is string && data.coverAccentColor.size() <= 40))
+        && (!('chapters' in data) || (data.chapters is list && data.chapters.size() <= 300 && (data.chapters.size() == 0 || data.chapters[0] is map)))
+        && (!('loreEntries' in data) || (data.loreEntries is list && data.loreEntries.size() <= 500 && (data.loreEntries.size() == 0 || data.loreEntries[0] is map)))
+        && (!('publishingKit' in data) || data.publishingKit is map)
+        && (!('formattingSettings' in data) || data.formattingSettings is map)
+        && (!('originalityReport' in data) || data.originalityReport is map)
+        && (!('isOffloadedToDrive' in data) || data.isOffloadedToDrive is bool)
+        && (!('offloadMetadata' in data) || data.offloadMetadata == null || data.offloadMetadata is map)
+        && (!('chapterOutlines' in data) || (data.chapterOutlines is list && data.chapterOutlines.size() <= 300 && (data.chapterOutlines.size() == 0 || data.chapterOutlines[0] is map)))
+        && (!('loreSummaries' in data) || (data.loreSummaries is list && data.loreSummaries.size() <= 500 && (data.loreSummaries.size() == 0 || data.loreSummaries[0] is map)))
+        && (!('_stubVersion' in data) || (data._stubVersion is string && data._stubVersion.size() <= 40))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStudioSettings(data) {
+      return data.keys().hasAll(['studioName', 'imprintName', 'tagline', 'description', 'authorizedAdminEmails', 'autoApplyToBookImprint', 'autoApplyToTitlePage', 'autoApplyToSpine', 'updatedAt'])
+        && data.keys().hasOnly(['studioName', 'imprintName', 'tagline', 'description', 'studioLogo', 'websiteUrl', 'supportEmail', 'headquarters', 'authorizedAdminEmails', 'autoApplyToBookImprint', 'autoApplyToTitlePage', 'autoApplyToSpine', 'updatedAt'])
+        && data.studioName is string && data.studioName.size() >= 1 && data.studioName.size() <= 120
+        && data.imprintName is string && data.imprintName.size() >= 1 && data.imprintName.size() <= 120
+        && data.tagline is string && data.tagline.size() <= 240
+        && data.description is string && data.description.size() <= 2000
+        && (!('studioLogo' in data) || data.studioLogo is map)
+        && (!('websiteUrl' in data) || (data.websiteUrl is string && data.websiteUrl.size() <= 512))
+        && (!('supportEmail' in data) || (data.supportEmail is string && data.supportEmail.size() <= 320))
+        && (!('headquarters' in data) || (data.headquarters is string && data.headquarters.size() <= 160))
+        && data.authorizedAdminEmails is list && data.authorizedAdminEmails.size() >= 1 && data.authorizedAdminEmails.size() <= 20 && data.authorizedAdminEmails[0] is string
+        && data.autoApplyToBookImprint is bool
+        && data.autoApplyToTitlePage is bool
+        && data.autoApplyToSpine is bool
+        && data.updatedAt is timestamp;
+    }
+
+    // 4. Collection Rules
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && (isOwner(userId) || isAdmin())
+        && incoming().id == existing().id
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'preferredGenre', 'updatedAt']);
+      allow delete: if isVerifiedUser()
+        && isValidId(userId)
+        && (isOwner(userId) || isAdmin());
+    }
+
+    match /books/{bookId} {
+      allow get: if isSignedIn()
+        && isValidId(bookId)
+        && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(bookId)
+        && isValidBook(incoming(), bookId)
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(bookId)
+        && isValidBook(incoming(), bookId)
+        && (existing().userId == request.auth.uid || isAdmin())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'subtitle', 'author', 'genre', 'tone',
+            'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
+            'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
+            'chapters', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
+            'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
+            'updatedAt'
+          ])) ||
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'subtitle', 'author', 'genre', 'tone',
+            'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
+            'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
+            'chapters', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
+            'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
+            'updatedAt'
+          ]))
+        );
+      allow delete: if isVerifiedUser()
+        && isValidId(bookId)
+        && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /settings/{settingId} {
+      allow get: if isVerifiedUser() && isValidId(settingId) && settingId == 'studio' && isAdmin();
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(settingId)
+        && settingId == 'studio'
+        && isValidStudioSettings(incoming())
+        && isAdmin()
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(settingId)
+        && settingId == 'studio'
+        && isValidStudioSettings(incoming())
+        && isAdmin()
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'studioName', 'imprintName', 'tagline', 'description', 'studioLogo',
+          'websiteUrl', 'supportEmail', 'headquarters', 'authorizedAdminEmails',
+          'autoApplyToBookImprint', 'autoApplyToTitlePage', 'autoApplyToSpine', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list, create, update, delete: if false;
+    }
+
+    match /test/{docId} {
+      allow read, write: if false;
+    }
+  }
+}

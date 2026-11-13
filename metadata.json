@@ -1,0 +1,6 @@
+{
+  "name": "TomeCrafter - AI Book Studio",
+  "description": "Multi-agent AI book writing, formatting, illustration, and publishing suite with Firebase cloud sync.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

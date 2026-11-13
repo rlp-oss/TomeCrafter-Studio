@@ -1,0 +1,253 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "Private authenticated author profile",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 320
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "preferredGenre": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "book": {
+      "title": "Book",
+      "description": "User-owned book manuscript and studio project document",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "genre": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "tone": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "targetWordCount": {
+          "type": "number"
+        },
+        "currentWordCount": {
+          "type": "number"
+        },
+        "premise": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "targetAudience": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "coverImageUrl": {
+          "type": "string",
+          "maxLength": 500000
+        },
+        "coverImage": {
+          "type": "string",
+          "maxLength": 500000
+        },
+        "frontCoverImage": {
+          "type": "string",
+          "maxLength": 500000
+        },
+        "coverTitleFont": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "coverAccentColor": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "chapters": {
+          "type": "array"
+        },
+        "loreEntries": {
+          "type": "array"
+        },
+        "publishingKit": {
+          "type": "object"
+        },
+        "formattingSettings": {
+          "type": "object"
+        },
+        "originalityReport": {
+          "type": "object"
+        },
+        "isOffloadedToDrive": {
+          "type": "boolean"
+        },
+        "offloadMetadata": {
+          "type": "object"
+        },
+        "chapterOutlines": {
+          "type": "array"
+        },
+        "loreSummaries": {
+          "type": "array"
+        },
+        "_stubVersion": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "title", "author", "genre", "targetWordCount", "currentWordCount", "createdAt", "updatedAt"]
+    },
+    "studioSettings": {
+      "title": "StudioSettings",
+      "description": "Administrator-managed studio imprint and branding settings",
+      "type": "object",
+      "properties": {
+        "studioName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "imprintName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "tagline": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "studioLogo": {
+          "type": "object"
+        },
+        "websiteUrl": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "supportEmail": {
+          "type": "string",
+          "maxLength": 320
+        },
+        "headquarters": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "authorizedAdminEmails": {
+          "type": "array"
+        },
+        "autoApplyToBookImprint": {
+          "type": "boolean"
+        },
+        "autoApplyToTitlePage": {
+          "type": "boolean"
+        },
+        "autoApplyToSpine": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["studioName", "imprintName", "tagline", "description", "authorizedAdminEmails", "autoApplyToBookImprint", "autoApplyToTitlePage", "autoApplyToSpine", "updatedAt"]
+    },
+    "adminRecord": {
+      "title": "AdminRecord",
+      "description": "Server-managed administrator role markers",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "grantedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "Private authenticated user profile records"
+    },
+    "/books/{bookId}": {
+      "schema": "book",
+      "description": "User-owned book manuscripts and studio project archives"
+    },
+    "/settings/{settingId}": {
+      "schema": "studioSettings",
+      "description": "Administrator-managed studio branding settings (studio document)"
+    },
+    "/admins/{adminId}": {
+      "schema": "adminRecord",
+      "description": "Trusted administrator lookup collection"
+    }
+  }
+}
