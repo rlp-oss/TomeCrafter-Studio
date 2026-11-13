@@ -525,7 +525,6 @@ export const ManuscriptDropWindow: React.FC<ManuscriptDropWindowProps> = ({
                       <span className="font-serif font-medium text-stone-200 truncate">
                         {ch.title}
                       </span>
-                      <span className="text-[10px] text-stone-500 hidden sm:inline">({ch.act})</span>
                     </div>
                     <span className="font-mono text-[11px] text-stone-400 shrink-0 ml-2">
                       {ch.wordCount.toLocaleString()} w

@@ -520,6 +520,43 @@ export interface CouncilFinalSweepReport {
   finalTouchRecommendations: string[];
 }
 
+export interface FullBookFormattingChoices {
+  recommendedTrimSize: "6x9" | "5.5x8.5" | "8x10" | "pocket";
+  recommendedFontPreset: FormattingSettings["fontPreset"];
+  recommendedGoogleFont: string;
+  recommendedFontSize: string;
+  recommendedLineSpacing: string;
+  recommendedChapterHeadingCase: "title" | "small-caps" | "uppercase" | "roman";
+  recommendedSceneBreakSymbol: string;
+  dropCapsRecommended: boolean;
+  typographyRationale: string;
+  globalStyleDirectives: string[];
+}
+
+export interface FullBookChapterAudit {
+  chapterId: string;
+  chapterNumber: number;
+  title: string;
+  critique: CritiqueResult;
+  continuityLinks: string[];
+  formattingNotes: string;
+  priorityFocus: "all" | "line_edits" | "pacing" | "dialogue" | "sensory" | "voice";
+}
+
+export interface FullBookReadAuditResult {
+  bookDigest: {
+    narrativeSummary: string;
+    coreThemes: string[];
+    characterArcSummary: string[];
+    continuityWarnings: string[];
+    crossChapterEliminatedDoubleEdits: string[];
+  };
+  formattingChoices: FullBookFormattingChoices;
+  overallHealthScore: number;
+  chapterAudits: FullBookChapterAudit[];
+  auditedAt: string;
+}
+
 export interface SubstackArticle {
   id: string;
   chapterNumber: number;

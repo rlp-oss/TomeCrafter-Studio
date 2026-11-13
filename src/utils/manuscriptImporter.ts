@@ -287,10 +287,16 @@ const IGNORE_BREAK_REGEX =
 
 const TOC_ENTRY_REGEX = /(?:\.{3,}|\t|\s{3,})\d+\s*$/;
 
+const TOC_HEADER_REGEX =
+  /^(?:#{1,6}\s+)?(?:table\s+of\s+contents|table\s+of\s+index|contents|directory\s+of\s+acts,\s+chapters.*)$/i;
+
+const ACT_DIVIDER_LINE_REGEX =
+  /^(?:ACT\s+(?:[IVXLCDM]+|\d+)(?:\s*[:.\-—–].*)?|PART\s+(?:[IVXLCDM]+|\d+)(?:\s*[:.\-—–].*)?|BACK\s+MATTER(?:\s*&.*)?|APPENDICES(?:\s*&.*)?)$/i;
+
 function isChapterHeadingLine(line: string, prevBlank: boolean, nextBlank: boolean): string | null {
   // Strip optional markdown heading prefix (#) and bold/italic asterisks/underscores
   const rawTrimmed = line.trim();
-  if (!rawTrimmed || rawTrimmed.length > 110) return null;
+  if (!rawTrimmed || rawTrimmed.length > 120) return null;
 
   const cleaned = rawTrimmed
     .replace(/^#{1,6}\s+/, "")
@@ -298,6 +304,12 @@ function isChapterHeadingLine(line: string, prevBlank: boolean, nextBlank: boole
     .trim();
 
   if (!cleaned || IGNORE_BREAK_REGEX.test(cleaned) || TOC_ENTRY_REGEX.test(cleaned)) {
+    return null;
+  }
+
+  // Real chapter headings must start after a blank line (or be Markdown # headings).
+  // Consecutive directory lines in a Table of Contents / Index lack a leading blank line.
+  if (!prevBlank && !rawTrimmed.startsWith("#")) {
     return null;
   }
 
@@ -315,29 +327,59 @@ function isChapterHeadingLine(line: string, prevBlank: boolean, nextBlank: boole
     return sepTitle;
   }
 
-  // If there is trailing text without a colon/dash (e.g. "Chapter 1 The Spark" vs a prose sentence "Chapter 1 was...")
+  // If there is trailing text without a colon/dash (e.g. "Chapter 1 The Spark" vs prose sentence)
   if (spaceTitle) {
     if (IGNORE_BREAK_REGEX.test(spaceTitle)) return null;
     // Reject full prose sentences starting with "Chapter N ..."
     if (/[.!?]$/.test(spaceTitle) || spaceTitle.split(/\s+/).length > 8) {
       return null;
     }
-    if (!prevBlank && !nextBlank && !rawTrimmed.startsWith("#")) {
+    if (!nextBlank && !rawTrimmed.startsWith("#")) {
       return null;
     }
     return spaceTitle;
   }
 
   // Plain "Chapter 1" .. "Chapter 19"
-  if (!prevBlank && !nextBlank && !rawTrimmed.startsWith("#")) {
+  if (!nextBlank && !rawTrimmed.startsWith("#")) {
     return null;
   }
   return cleaned;
 }
 
 /**
- * Splits raw manuscript text strictly on explicit Chapter headings (ignoring page breaks,
- * chapter breaks, scene dividers, and subheadings), only splitting by word budget when requested.
+ * Strips any trailing standalone Act opener banner ("ACT II: ...", plus optional 1-line subtitle)
+ * that sits immediately before the next Chapter heading so Act headers don't pollute chapter ends.
+ */
+function trimTrailingActBanner(lines: string[]): string[] {
+  const result = [...lines];
+  while (result.length > 0 && result[result.length - 1].trim() === "") {
+    result.pop();
+  }
+  if (result.length === 0) return result;
+
+  const last = result[result.length - 1].trim();
+  const secondLast = result.length >= 2 ? result[result.length - 2].trim() : "";
+
+  if (ACT_DIVIDER_LINE_REGEX.test(last)) {
+    result.pop();
+  } else if (
+    ACT_DIVIDER_LINE_REGEX.test(secondLast) &&
+    last.length > 0 &&
+    last.length <= 120 &&
+    !/[.!?]$/.test(last)
+  ) {
+    result.pop();
+    result.pop();
+  }
+
+  return result;
+}
+
+/**
+ * Splits raw manuscript text strictly on explicit Chapter headings (ignoring Table of Contents/Index
+ * entries, Act headings, page breaks, chapter breaks, and scene dividers), only splitting by word
+ * budget when requested.
  */
 export function splitManuscriptIntoSections(
   rawText: string,
@@ -347,55 +389,93 @@ export function splitManuscriptIntoSections(
   const normalized = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\f/g, "\n\n");
   const lines = normalized.split("\n");
 
-  const detected: { title: string; bodyLines: string[]; isPreamble: boolean }[] = [];
-  let currentTitle: string | null = null;
-  let currentLines: string[] = [];
+  // Detect any Table of Contents / Index range so entries inside it are never split as chapters
+  let tocStartIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (TOC_HEADER_REGEX.test(lines[i].trim())) {
+      tocStartIndex = i;
+      break;
+    }
+  }
 
+  // Pass 1: Collect candidate chapter headings outside consecutive TOC/Index clusters
+  interface CandidateHeading {
+    lineIndex: number;
+    title: string;
+  }
+  const rawCandidates: CandidateHeading[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const prevBlank = i === 0 || lines[i - 1].trim() === "";
     const nextBlank = i === lines.length - 1 || lines[i + 1].trim() === "";
     const heading = isChapterHeadingLine(line, prevBlank, nextBlank);
-
     if (heading) {
-      if (currentTitle !== null) {
-        detected.push({
-          title: currentTitle,
-          bodyLines: currentLines,
-          isPreamble: false,
-        });
-      } else if (currentLines.join("\n").trim().length > 0) {
-        detected.push({
-          title: "Opening",
-          bodyLines: currentLines,
-          isPreamble: true,
-        });
-      }
-      currentTitle = heading;
-      currentLines = [];
-    } else {
-      currentLines.push(line);
+      rawCandidates.push({ lineIndex: i, title: heading });
     }
   }
 
-  if (currentTitle !== null) {
-    detected.push({
-      title: currentTitle,
-      bodyLines: currentLines,
-      isPreamble: false,
-    });
-  } else if (currentLines.join("\n").trim().length > 0) {
+  // Filter out stub / TOC / Act-only candidates (e.g. < 45 words of non-Act-banner body before next heading)
+  const verifiedCandidates: CandidateHeading[] = [];
+  for (let c = 0; c < rawCandidates.length; c++) {
+    const curr = rawCandidates[c];
+    const nextLineIdx = c + 1 < rawCandidates.length ? rawCandidates[c + 1].lineIndex : lines.length;
+    const sliceLines = lines.slice(curr.lineIndex + 1, nextLineIdx);
+    const cleanedBody = trimTrailingActBanner(sliceLines)
+      .filter((l) => !ACT_DIVIDER_LINE_REGEX.test(l.trim()))
+      .join("\n")
+      .trim();
+    const proseWords = cleanedBody ? cleanedBody.split(/\s+/).filter(Boolean).length : 0;
+
+    // Disqualify TOC/directory stubs (< 45 words of real body) and anything directly inside a TOC directory
+    const isInsideTocPrefix =
+      tocStartIndex !== -1 &&
+      curr.lineIndex > tocStartIndex &&
+      curr.lineIndex - tocStartIndex < 60 &&
+      proseWords < 120;
+
+    if (proseWords < 45 || isInsideTocPrefix) {
+      continue;
+    }
+    verifiedCandidates.push(curr);
+  }
+
+  const detected: { title: string; bodyLines: string[]; isPreamble: boolean }[] = [];
+  if (verifiedCandidates.length > 0) {
+    if (verifiedCandidates[0].lineIndex > 0) {
+      const preLines = lines.slice(0, verifiedCandidates[0].lineIndex);
+      if (preLines.join("\n").trim().length > 0) {
+        detected.push({
+          title: "Opening",
+          bodyLines: preLines,
+          isPreamble: true,
+        });
+      }
+    }
+    for (let c = 0; c < verifiedCandidates.length; c++) {
+      const startLine = verifiedCandidates[c].lineIndex + 1;
+      const endLine = c + 1 < verifiedCandidates.length ? verifiedCandidates[c + 1].lineIndex : lines.length;
+      const bodySlice =
+        c + 1 < verifiedCandidates.length
+          ? trimTrailingActBanner(lines.slice(startLine, endLine))
+          : lines.slice(startLine, endLine);
+      detected.push({
+        title: verifiedCandidates[c].title,
+        bodyLines: bodySlice,
+        isPreamble: false,
+      });
+    }
+  } else if (normalized.trim().length > 0) {
     detected.push({
       title: "Chapter 1",
-      bodyLines: currentLines,
+      bodyLines: lines,
       isPreamble: false,
     });
   }
 
   const hasExplicitChapters = detected.some((d) => !d.isPreamble);
 
-  // If explicit Chapter headings were found, ignore short front-matter preambles (< 250 words)
-  // before Chapter 1 (title page, dedication, copyright, TOC) so Chapters 1..N match cleanly.
+  // When explicit Chapter headings exist (e.g. Chapter 1 through Chapter 19), drop front matter /
+  // copyright / Table of Contents / preamble before Chapter 1 so only the numbered chapters populate.
   let sections: ParsedManuscriptSection[] = detected
     .map((sec, idx) => {
       const content = sec.bodyLines.join("\n").trim();
@@ -409,7 +489,7 @@ export function splitManuscriptIntoSections(
     })
     .filter((s) => {
       if (s.content.length === 0) return false;
-      if (hasExplicitChapters && s.isPreamble && s.wordCount < 250) return false;
+      if (hasExplicitChapters && s.isPreamble) return false;
       return true;
     })
     .map(({ title, content, wordCount }) => ({ title, content, wordCount }));
@@ -505,16 +585,11 @@ export function buildManuscriptImportPreview(
   );
 
   const startingNumber = options.replaceExistingChapters ? 1 : book.chapters.length + 1;
-  const totalNewChapters = sections.length;
 
   const chapters: Chapter[] = sections.map((sec, idx) => {
     const chNum = startingNumber + idx;
     const formattedContent = autoFormatProseForPrint(sec.content, options.autoFormatTypography);
     const wordCount = formattedContent ? formattedContent.split(/\s+/).filter(Boolean).length : 0;
-
-    // Assign Act I / II / III smoothly across the narrative
-    const progress = totalNewChapters > 1 ? idx / totalNewChapters : 0;
-    const act = progress < 0.28 ? "Act I" : progress < 0.74 ? "Act II" : "Act III";
 
     // Build concise summary from opening prose
     const firstParagraph = formattedContent.split(/\n\n/)[0] || "";
@@ -524,7 +599,7 @@ export function buildManuscriptImportPreview(
     return {
       id: `ch-${Date.now()}-${idx + 1}`,
       number: chNum,
-      act,
+      act: "Chapters",
       title: sec.title || `Chapter ${chNum}`,
       summary: summarySnippet || `Imported from ${sourceName}`,
       goal: "Refine narrative arc and scene pacing",

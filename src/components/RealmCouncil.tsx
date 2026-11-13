@@ -32,6 +32,11 @@ import {
   Sparkle,
   History,
   Wand2,
+  Layers,
+  ChevronDown,
+  ChevronUp,
+  Link2,
+  Type,
 } from "lucide-react";
 import {
   AgentId,
@@ -41,10 +46,12 @@ import {
   CritiqueResult,
   ApplyRecommendationsResult,
   CouncilFinalSweepReport,
+  FullBookReadAuditResult,
   RealmAgent,
 } from "../types";
 import { REALM_AGENTS } from "../data/agents";
 import { apiService } from "../services/api";
+import { BOOK_SIZE_PROFILES } from "../utils/manuscriptImporter";
 
 interface RealmCouncilProps {
   book: Book;
@@ -146,11 +153,37 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
   const [isRunningFinalSweep, setIsRunningFinalSweep] = useState(false);
   const [sweepError, setSweepError] = useState<string | null>(null);
 
+  // --- Full Book Read Audit State (Digest entire book first, unify formatting & eliminate double edits) ---
+  const [fullBookAudit, setFullBookAudit] = useState<FullBookReadAuditResult | null>(null);
+  const [isRunningFullBookAudit, setIsRunningFullBookAudit] = useState(false);
+  const [fullBookAuditError, setFullBookAuditError] = useState<string | null>(null);
+  const [showFullBookDigest, setShowFullBookDigest] = useState(true);
+  const [formattingAppliedNotice, setFormattingAppliedNotice] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFullBookAudit(null);
+    setFullBookAuditError(null);
+    setFormattingAppliedNotice(null);
+    setApplyError(null);
+    setChapterCritiques({});
+    setAppliedRecommendations({});
+    setFinalSweepReport(null);
+    setReviewedChapterIds(new Set());
+    setActiveChapterIndex(0);
+  }, [book.id]);
+
   const chapters = book.chapters || [];
   const currentChapter = chapters[activeChapterIndex] || chapters[0];
   const isLastChapter = activeChapterIndex >= chapters.length - 1;
   const currentChapterCritique = currentChapter ? chapterCritiques[currentChapter.id] : null;
   const currentChapterApplied = currentChapter ? appliedRecommendations[currentChapter.id] : null;
+  const currentChapterFullAudit =
+    fullBookAudit && currentChapter
+      ? fullBookAudit.chapterAudits.find(
+          (a) => a.chapterId === currentChapter.id || a.chapterNumber === currentChapter.number
+        ) || null
+      : null;
 
   // Track total chapters with changes fulfilled / reviewed
   const reviewedCount = reviewedChapterIds.size;
@@ -307,11 +340,122 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
     }
   };
 
+  // Select chapter & sync priority focus from Full Book Read Audit if present
+  const handleSelectChapter = (idx: number) => {
+    const safeIdx = Math.max(0, Math.min(chapters.length - 1, idx));
+    setActiveChapterIndex(safeIdx);
+    const targetCh = chapters[safeIdx];
+    if (targetCh && fullBookAudit) {
+      const auditForCh = fullBookAudit.chapterAudits.find(
+        (a) => a.chapterId === targetCh.id || a.chapterNumber === targetCh.number
+      );
+      if (auditForCh?.priorityFocus) {
+        setApplyFocusArea(auditForCh.priorityFocus);
+      }
+    }
+  };
+
+  // Run Full Book Read Audit: Council reads & digests the entire book first, chooses formatting, and audits all chapters
+  const handleRunFullBookReadAudit = async () => {
+    const draftedCount = chapters.filter((ch) => (ch.content || "").trim().length > 0).length;
+    if (chapters.length === 0 || draftedCount === 0) {
+      setFullBookAuditError("Add or import manuscript chapters with text before running a Full Book Read Audit.");
+      setActiveViewMode("chapter_review");
+      return;
+    }
+
+    setIsRunningFullBookAudit(true);
+    setFullBookAuditError(null);
+    setFormattingAppliedNotice(null);
+    setActiveViewMode("chapter_review");
+
+    try {
+      const result = await apiService.performFullBookReadAudit({ book });
+      const nextCritiques: Record<string, CritiqueResult> = {};
+      for (const audit of result.chapterAudits || []) {
+        const matched = chapters.find(
+          (ch) => ch.id === audit.chapterId || ch.number === audit.chapterNumber
+        );
+        const key = matched ? matched.id : audit.chapterId;
+        if (key && audit.critique) {
+          nextCritiques[key] = audit.critique;
+        }
+      }
+
+      setChapterCritiques((prev) => ({ ...prev, ...nextCritiques }));
+      setFullBookAudit(result);
+      setShowFullBookDigest(true);
+      setActiveChapterIndex(0);
+
+      const firstCh = chapters[0];
+      if (firstCh) {
+        const firstAudit = (result.chapterAudits || []).find(
+          (a) => a.chapterId === firstCh.id || a.chapterNumber === firstCh.number
+        );
+        if (firstAudit?.priorityFocus) {
+          setApplyFocusArea(firstAudit.priorityFocus);
+        }
+      }
+    } catch (err: any) {
+      console.error("Full book read audit error:", err);
+      setFullBookAuditError(err.message || "Failed to complete Full Book Read Audit.");
+    } finally {
+      setIsRunningFullBookAudit(false);
+    }
+  };
+
+  // Apply the Council's recommended formatting choices to book.formattingSettings
+  const handleApplyCouncilFormattingChoices = () => {
+    if (!fullBookAudit?.formattingChoices) return;
+    const fc = fullBookAudit.formattingChoices;
+    const profile = BOOK_SIZE_PROFILES[fc.recommendedTrimSize] || BOOK_SIZE_PROFILES["6x9"];
+    const totalWords =
+      chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0) || book.currentWordCount || 0;
+    const estimatedPages = Math.max(24, Math.ceil(totalWords / profile.wordsPerPage) + 12);
+    const spineWidth = Number((estimatedPages * 0.002252).toFixed(3));
+
+    const updatedBook: Book = {
+      ...book,
+      formattingSettings: {
+        ...book.formattingSettings,
+        trimSize: fc.recommendedTrimSize || profile.id,
+        fontPreset: fc.recommendedFontPreset || "garamond",
+        googleFontFamily: fc.recommendedGoogleFont || book.formattingSettings?.googleFontFamily,
+        fontSize: fc.recommendedFontSize || profile.fontSize,
+        fontSizePx: profile.fontSizePx,
+        lineSpacing: fc.recommendedLineSpacing || profile.lineSpacing,
+        lineHeightValue: profile.lineHeightValue,
+        paragraphIndentEm: profile.paragraphIndentEm,
+        paragraphSpacingEm: profile.paragraphSpacingEm,
+        chapterWordBudget: profile.chapterWordBudget,
+        chapterHeadingCase: fc.recommendedChapterHeadingCase || "title",
+        sceneBreakSymbol: fc.recommendedSceneBreakSymbol || "* * *",
+        dropCaps: typeof fc.dropCapsRecommended === "boolean" ? fc.dropCapsRecommended : profile.dropCaps,
+      },
+      publishingKit: {
+        ...book.publishingKit,
+        printSpecs: {
+          recommendedTrimSize: profile.recommendedTrimLabel,
+          estimatedPageCount: estimatedPages,
+          spineWidthInches: spineWidth,
+          margins: profile.margins,
+        },
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    onUpdateBook(updatedBook);
+    setFormattingAppliedNotice(
+      `Applied ${profile.label} (${fc.recommendedTrimSize}), ${fc.recommendedGoogleFont || fc.recommendedFontPreset}, ${fc.recommendedFontSize} / ${fc.recommendedLineSpacing} leading.`
+    );
+  };
+
   // Apply Council Recommendations to Active Chapter
   const handleApplyRecommendations = async () => {
     if (!currentChapter || !currentChapter.content?.trim()) return;
 
     setIsApplyingRecommendations(true);
+    setApplyError(null);
     try {
       const result = await apiService.applyChapterRecommendations({
         chapter: currentChapter,
@@ -325,6 +469,14 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
         critique: currentChapterCritique,
         focusArea: applyFocusArea,
         specialInstructions: customAuthorInstructions.trim() || undefined,
+        fullBookDigest: fullBookAudit
+          ? {
+              narrativeSummary: fullBookAudit.bookDigest.narrativeSummary,
+              globalStyleDirectives: fullBookAudit.formattingChoices.globalStyleDirectives,
+              continuityLinks: currentChapterFullAudit?.continuityLinks || [],
+              formattingNotes: currentChapterFullAudit?.formattingNotes || "",
+            }
+          : undefined,
       });
 
       setAppliedRecommendations((prev) => ({
@@ -333,7 +485,7 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
       }));
     } catch (err: any) {
       console.error("Apply recommendations error:", err);
-      alert("Encountered an issue applying recommendations: " + err.message);
+      setApplyError("Encountered an issue applying recommendations: " + (err.message || "Unknown error"));
     } finally {
       setIsApplyingRecommendations(false);
     }
@@ -378,10 +530,10 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
     } else {
       // Move to next chapter
       const nextIndex = activeChapterIndex + 1;
-      setActiveChapterIndex(nextIndex);
+      handleSelectChapter(nextIndex);
       const nextChapter = book.chapters[nextIndex];
       if (nextChapter && nextChapter.content && !chapterCritiques[nextChapter.id]) {
-        // Auto-request critique for the next chapter
+        // Auto-request critique for the next chapter only if not already audited by Full Book Read
         handleRequestChapterCritique(nextChapter);
       }
     }
@@ -396,7 +548,7 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
       }
     } else {
       const nextIndex = activeChapterIndex + 1;
-      setActiveChapterIndex(nextIndex);
+      handleSelectChapter(nextIndex);
       const nextChapter = book.chapters[nextIndex];
       if (nextChapter && nextChapter.content && !chapterCritiques[nextChapter.id]) {
         handleRequestChapterCritique(nextChapter);
@@ -454,62 +606,83 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
             </div>
           </div>
 
-          {/* Mode Switcher Tabs */}
-          <div className="flex items-center p-1 bg-stone-950 rounded-xl border border-stone-800 self-start md:self-auto">
+          {/* Mode Switcher Tabs + Full Book Read Audit CTA */}
+          <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
             <button
-              onClick={() => setActiveViewMode("chapter_review")}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all ${
-                activeViewMode === "chapter_review"
-                  ? "bg-amber-500 text-stone-950 font-bold shadow-md shadow-amber-950/40"
-                  : "text-stone-400 hover:text-stone-200"
-              }`}
+              onClick={handleRunFullBookReadAudit}
+              disabled={isRunningFullBookAudit || totalChapters === 0}
+              className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-emerald-400 hover:from-amber-400 hover:to-emerald-300 text-stone-950 font-bold text-xs shadow-lg shadow-amber-950/40 transition-all disabled:opacity-50"
+              title="Let the Council read and digest the entire manuscript first, lock unified formatting choices, and break down single-pass recommendations per chapter"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Chapter Review & Polish</span>
-              {reviewedCount > 0 && (
-                <span
-                  className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                    activeViewMode === "chapter_review"
-                      ? "bg-stone-950/30 text-stone-950 font-mono"
-                      : "bg-amber-500/20 text-amber-300 font-mono"
-                  }`}
-                >
-                  {reviewedCount}/{totalChapters}
-                </span>
+              {isRunningFullBookAudit ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Reading Full Book ({totalChapters} Ch)...</span>
+                </>
+              ) : (
+                <>
+                  <BookOpen className="w-4 h-4" />
+                  <span>{fullBookAudit ? "Re-Run Full Book Read Audit" : "Full Book Read Audit"}</span>
+                </>
               )}
             </button>
 
-            <button
-              onClick={() => {
-                setActiveViewMode("final_sweep");
-                if (!finalSweepReport && !isRunningFinalSweep) {
-                  handleRunFinalSweep();
-                }
-              }}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all ${
-                activeViewMode === "final_sweep"
-                  ? "bg-amber-500 text-stone-950 font-bold shadow-md shadow-amber-950/40"
-                  : "text-stone-400 hover:text-stone-200"
-              }`}
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Sovereign Final Sweep</span>
-              {finalSweepReport && (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              )}
-            </button>
+            <div className="flex items-center p-1 bg-stone-950 rounded-xl border border-stone-800">
+              <button
+                onClick={() => setActiveViewMode("chapter_review")}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all ${
+                  activeViewMode === "chapter_review"
+                    ? "bg-amber-500 text-stone-950 font-bold shadow-md shadow-amber-950/40"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Chapter Review & Polish</span>
+                {reviewedCount > 0 && (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                      activeViewMode === "chapter_review"
+                        ? "bg-stone-950/30 text-stone-950 font-mono"
+                        : "bg-amber-500/20 text-amber-300 font-mono"
+                    }`}
+                  >
+                    {reviewedCount}/{totalChapters}
+                  </span>
+                )}
+              </button>
 
-            <button
-              onClick={() => setActiveViewMode("chamber")}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all ${
-                activeViewMode === "chamber"
-                  ? "bg-amber-500 text-stone-950 font-bold shadow-md shadow-amber-950/40"
-                  : "text-stone-400 hover:text-stone-200"
-              }`}
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span>Master Consultation</span>
-            </button>
+              <button
+                onClick={() => {
+                  setActiveViewMode("final_sweep");
+                  if (!finalSweepReport && !isRunningFinalSweep) {
+                    handleRunFinalSweep();
+                  }
+                }}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all ${
+                  activeViewMode === "final_sweep"
+                    ? "bg-amber-500 text-stone-950 font-bold shadow-md shadow-amber-950/40"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Sovereign Final Sweep</span>
+                {finalSweepReport && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveViewMode("chamber")}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all ${
+                  activeViewMode === "chamber"
+                    ? "bg-amber-500 text-stone-950 font-bold shadow-md shadow-amber-950/40"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Master Consultation</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -525,6 +698,11 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                 </span>
               </div>
               <div className="flex items-center space-x-3">
+                {fullBookAudit && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    Full-Book Digest Active • No Double Edits
+                  </span>
+                )}
                 <span className="font-mono text-xs text-stone-300">
                   {reviewedCount} of {totalChapters} Chapters Fulfilled ({Math.round((reviewedCount / totalChapters) * 100)}%)
                 </span>
@@ -547,7 +725,7 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                 return (
                   <button
                     key={ch.id}
-                    onClick={() => setActiveChapterIndex(idx)}
+                    onClick={() => handleSelectChapter(idx)}
                     className={`relative p-2 rounded-xl text-left border transition-all ${
                       isSelected
                         ? "bg-amber-500 text-stone-950 border-amber-400 shadow-md scale-105 z-10"
@@ -580,6 +758,272 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
       {/* ========================================================================= */}
       {activeViewMode === "chapter_review" && (
         <div className="space-y-6">
+          {/* Full Book Read Audit Loading Banner */}
+          {isRunningFullBookAudit && (
+            <div className="bg-stone-900 border border-amber-500/40 rounded-2xl p-6 shadow-xl flex flex-col sm:flex-row items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
+                <Loader2 className="w-6 h-6 animate-spin" />
+              </div>
+              <div className="space-y-1 text-center sm:text-left">
+                <h3 className="font-serif font-bold text-base text-stone-100">
+                  Council is Reading & Digesting the Entire Manuscript First...
+                </h3>
+                <p className="text-xs text-stone-400">
+                  Scanning all {totalChapters} chapters together to lock unified typography/trim formatting choices, detect cross-chapter continuity threads, eliminate double edits, and generate tailored per-chapter recommendations.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Full Book Read Audit Error */}
+          {fullBookAuditError && (
+            <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-700/60 text-rose-200 text-xs flex items-center justify-between gap-3">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{fullBookAuditError}</span>
+              </div>
+              <button
+                onClick={() => setFullBookAuditError(null)}
+                className="text-rose-300 hover:text-white underline shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Full Book Digest & Formatting Choices Panel */}
+          {!isRunningFullBookAudit && fullBookAudit && (
+            <div className="bg-stone-900/95 border border-amber-500/40 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                    <Layers className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center space-x-2 flex-wrap">
+                      <h2 className="font-serif font-bold text-base text-stone-100">
+                        Full Book Digest & Council Formatting Choices
+                      </h2>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        Health: {fullBookAudit.overallHealthScore}/100
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                        {(fullBookAudit.chapterAudits || []).length} Chapters Digested
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-400 mt-0.5">
+                      Whole-book context & formatting standards locked upfront so every chapter edit executes in a single pass with zero double edits.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 self-start sm:self-auto">
+                  <button
+                    onClick={handleApplyCouncilFormattingChoices}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold text-xs shadow-md flex items-center space-x-1.5 transition-all"
+                  >
+                    <Type className="w-3.5 h-3.5" />
+                    <span>Apply Council Formatting Choices</span>
+                  </button>
+                  <button
+                    onClick={() => setShowFullBookDigest((v) => !v)}
+                    className="p-2 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-300 border border-stone-800 transition-colors"
+                    title={showFullBookDigest ? "Collapse Digest" : "Expand Digest"}
+                  >
+                    {showFullBookDigest ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {formattingAppliedNotice && (
+                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-600/50 text-emerald-300 text-xs flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>{formattingAppliedNotice}</span>
+                  </div>
+                  {onNavigateToTab && (
+                    <button
+                      onClick={() => onNavigateToTab("typesetting")}
+                      className="text-emerald-200 hover:text-white underline font-medium ml-3 shrink-0"
+                    >
+                      Open Interior Typesetting →
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {showFullBookDigest && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    {/* Left: Narrative Digest & Eliminated Double Edits (7 cols) */}
+                    <div className="lg:col-span-7 space-y-3">
+                      <div className="p-3.5 rounded-xl bg-stone-950 border border-stone-800 space-y-2">
+                        <div className="text-[11px] font-mono uppercase text-amber-400 font-bold">
+                          Full-Manuscript Narrative Digest
+                        </div>
+                        <p className="text-xs text-stone-300 leading-relaxed">
+                          {fullBookAudit.bookDigest.narrativeSummary}
+                        </p>
+                        {fullBookAudit.bookDigest.coreThemes?.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {fullBookAudit.bookDigest.coreThemes.map((theme, i) => (
+                              <span
+                                key={i}
+                                className="px-2 py-0.5 rounded-md bg-stone-900 border border-stone-700 text-[10px] text-stone-300"
+                              >
+                                {theme}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1.5">
+                          <div className="text-[11px] font-mono uppercase text-emerald-400 font-bold flex items-center space-x-1">
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Double Edits Eliminated</span>
+                          </div>
+                          <ul className="space-y-1 text-[11px] text-stone-300 list-disc pl-4">
+                            {(fullBookAudit.bookDigest.crossChapterEliminatedDoubleEdits || []).map(
+                              (item, i) => (
+                                <li key={i}>{item}</li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1.5">
+                          <div className="text-[11px] font-mono uppercase text-amber-400 font-bold flex items-center space-x-1">
+                            <Link2 className="w-3.5 h-3.5" />
+                            <span>Continuity & Arc Checkpoints</span>
+                          </div>
+                          <ul className="space-y-1 text-[11px] text-stone-300 list-disc pl-4">
+                            {(fullBookAudit.bookDigest.continuityWarnings || []).map((w, i) => (
+                              <li key={i}>{w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: Recommended Book-Wide Formatting Choices (5 cols) */}
+                    <div className="lg:col-span-5 p-3.5 rounded-xl bg-stone-950 border border-stone-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-mono uppercase text-amber-400 font-bold">
+                          Council Formatting Prescription
+                        </span>
+                        <span className="text-[10px] font-mono text-stone-400">
+                          {fullBookAudit.formattingChoices.recommendedTrimSize}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="p-2 rounded-lg bg-stone-900 border border-stone-800">
+                          <div className="text-stone-500">Trim Size</div>
+                          <div className="font-bold text-stone-200">
+                            {fullBookAudit.formattingChoices.recommendedTrimSize}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-lg bg-stone-900 border border-stone-800">
+                          <div className="text-stone-500">Typography</div>
+                          <div className="font-bold text-stone-200 truncate">
+                            {fullBookAudit.formattingChoices.recommendedGoogleFont ||
+                              fullBookAudit.formattingChoices.recommendedFontPreset}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-lg bg-stone-900 border border-stone-800">
+                          <div className="text-stone-500">Size / Leading</div>
+                          <div className="font-bold text-stone-200">
+                            {fullBookAudit.formattingChoices.recommendedFontSize} /{" "}
+                            {fullBookAudit.formattingChoices.recommendedLineSpacing}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-lg bg-stone-900 border border-stone-800">
+                          <div className="text-stone-500">Headings & Breaks</div>
+                          <div className="font-bold text-stone-200 truncate">
+                            {fullBookAudit.formattingChoices.recommendedChapterHeadingCase} •{" "}
+                            {fullBookAudit.formattingChoices.recommendedSceneBreakSymbol}
+                          </div>
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-stone-400 leading-relaxed italic">
+                        {fullBookAudit.formattingChoices.typographyRationale}
+                      </p>
+
+                      {fullBookAudit.formattingChoices.globalStyleDirectives?.length > 0 && (
+                        <div className="pt-2 border-t border-stone-800 space-y-1">
+                          <div className="text-[10px] font-mono uppercase text-stone-400 font-bold">
+                            Locked Style Rules (Honored Across Every Chapter):
+                          </div>
+                          <ul className="space-y-1 text-[11px] text-stone-300 list-disc pl-4">
+                            {fullBookAudit.formattingChoices.globalStyleDirectives.map((dir, i) => (
+                              <li key={i}>{dir}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Chapter-by-Chapter Breakdown Strip from Full Read */}
+                  <div className="pt-2 border-t border-stone-800 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-stone-400">
+                      <span className="uppercase font-bold text-amber-400">
+                        Chapter Breakdown (Click any chapter to inspect & apply single-pass edits)
+                      </span>
+                      <span>{(fullBookAudit.chapterAudits || []).length} Chapters</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+                      {(fullBookAudit.chapterAudits || []).map((audit) => {
+                        const matchedIdx = chapters.findIndex(
+                          (ch) => ch.id === audit.chapterId || ch.number === audit.chapterNumber
+                        );
+                        const isActive = matchedIdx === activeChapterIndex;
+                        const avgScore = Math.round(
+                          ((audit.critique?.readabilityScore || 80) +
+                            (audit.critique?.pacingScore || 80) +
+                            (audit.critique?.dialogueScore || 80) +
+                            (audit.critique?.sensoryScore || 80)) /
+                            4
+                        );
+                        return (
+                          <button
+                            key={audit.chapterId || audit.chapterNumber}
+                            onClick={() => matchedIdx >= 0 && handleSelectChapter(matchedIdx)}
+                            className={`p-2.5 rounded-xl border text-left transition-all ${
+                              isActive
+                                ? "bg-amber-500/15 border-amber-400 text-stone-100"
+                                : "bg-stone-950 border-stone-800 text-stone-300 hover:border-stone-700"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-bold truncate">
+                                Ch {audit.chapterNumber}: {audit.title}
+                              </span>
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-900 text-amber-300 shrink-0">
+                                {avgScore}/100
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-stone-400 mt-1 line-clamp-1">
+                              Focus: <span className="text-emerald-300 font-mono">{audit.priorityFocus}</span> —{" "}
+                              {audit.formattingNotes || audit.critique?.overallVerdict}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Active Chapter Review Banner & Controls */}
           {currentChapter ? (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -605,7 +1049,9 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                           {currentChapterApplied || reviewedChapterIds.has(currentChapter.id)
                             ? "Recommendations Applied ✓"
                             : currentChapterCritique
-                            ? "Critique Ready"
+                            ? currentChapterFullAudit
+                              ? "Full-Book Audit Ready"
+                              : "Critique Ready"
                             : "Pending Council Audit"}
                         </span>
                       </div>
@@ -660,7 +1106,7 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                         <>
                           <RefreshCw className="w-4 h-4 text-amber-400" />
                           <span>
-                            {currentChapterCritique ? "Re-Run Council Audit" : "Request Council Audit & Recommendations"}
+                            {currentChapterCritique ? "Re-Run Single Chapter Audit" : "Request Council Audit & Recommendations"}
                           </span>
                         </>
                       )}
@@ -683,7 +1129,9 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                         <Award className="w-4 h-4 text-amber-400" />
                         <span>Council Assessment Scores</span>
                       </h3>
-                      <span className="text-[10px] font-mono uppercase text-stone-500">High Inquisitor Thorne</span>
+                      <span className="text-[10px] font-mono uppercase text-stone-500">
+                        {currentChapterFullAudit ? "Full-Book Read Informed" : "High Inquisitor Thorne"}
+                      </span>
                     </div>
 
                     {/* Scores Grid */}
@@ -767,6 +1215,31 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                           </ul>
                         </div>
                       )}
+                      {/* Full-Read Continuity Links & Formatting Notes for this chapter */}
+                      {currentChapterFullAudit && (
+                        <div className="pt-2 border-t border-stone-800 space-y-2">
+                          {currentChapterFullAudit.formattingNotes && (
+                            <div className="p-2.5 rounded-lg bg-stone-950 border border-amber-500/25 text-[11px]">
+                              <div className="font-mono text-amber-400 font-bold mb-0.5">
+                                Full-Book Formatting Choice for Chapter {currentChapter.number}:
+                              </div>
+                              <div className="text-stone-300">{currentChapterFullAudit.formattingNotes}</div>
+                            </div>
+                          )}
+                          {currentChapterFullAudit.continuityLinks?.length > 0 && (
+                            <div className="p-2.5 rounded-lg bg-stone-950 border border-emerald-500/25 text-[11px]">
+                              <div className="font-mono text-emerald-400 font-bold mb-1">
+                                Cross-Chapter Continuity Threads:
+                              </div>
+                              <ul className="space-y-0.5 pl-4 list-disc text-stone-300">
+                                {currentChapterFullAudit.continuityLinks.map((link, i) => (
+                                  <li key={i}>{link}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Line Edits Preview */}
@@ -835,6 +1308,7 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                         <option value="pacing">Pacing & Narrative Momentum</option>
                         <option value="dialogue">Dialogue Subtext & Voice</option>
                         <option value="sensory">Sensory & Atmospheric Immersion</option>
+                        <option value="voice">Authorial Voice & Tone Cohesion</option>
                       </select>
                     </div>
 
@@ -870,12 +1344,21 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
                           <span>
                             {currentChapterApplied
                               ? "Re-Apply Recommended Changes"
+                              : fullBookAudit
+                              ? "Apply Full-Book Informed Recommendations"
                               : "Apply Recommended Changes to Chapter"}
                           </span>
                         </>
                       )}
                     </button>
                   </div>
+
+                  {applyError && (
+                    <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800 text-rose-300 text-xs flex items-start space-x-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                      <span>{applyError}</span>
+                    </div>
+                  )}
 
                   {/* Summary of Changes Applied (If already applied) */}
                   {currentChapterApplied && (

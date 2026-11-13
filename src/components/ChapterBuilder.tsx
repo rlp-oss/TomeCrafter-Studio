@@ -78,7 +78,10 @@ export const ChapterBuilder: React.FC<ChapterBuilderProps> = ({
   const completedChapters = book.chapters.filter((ch) => ch.status === "final" || ch.status === "polished").length;
   const emptyChaptersCount = book.chapters.filter((ch) => !ch.content || ch.content.trim().length === 0).length;
 
-  // Group chapters by Act
+  // Index view mode: strictly by chapter by default (never separate by Acts unless toggled)
+  const [indexViewMode, setIndexViewMode] = useState<"by_chapter" | "by_act">("by_chapter");
+
+  // Group chapters by Act (only used when user explicitly switches to Group by Act)
   const actsMap: Record<string, Chapter[]> = {};
   book.chapters.forEach((ch) => {
     const actName = ch.act || "Main Narrative";
@@ -87,6 +90,11 @@ export const ChapterBuilder: React.FC<ChapterBuilderProps> = ({
     }
     actsMap[actName].push(ch);
   });
+  const hasMultipleActs = Object.keys(actsMap).length > 1;
+  const displayedGroups: [string, Chapter[]][] =
+    indexViewMode === "by_act" && hasMultipleActs
+      ? Object.entries(actsMap)
+      : [["All Chapters (In Order)", book.chapters]];
 
   // Draft a single chapter's prose using outline & footnotes
   const handleDraftSingleChapter = async (chapter: Chapter) => {
@@ -621,21 +629,32 @@ export const ChapterBuilder: React.FC<ChapterBuilderProps> = ({
         </div>
       </div>
 
-      {/* Chapters Grouped By Act */}
+      {/* Chapters Index (Strictly By Chapter by Default) */}
       <div className="space-y-8">
-        {Object.entries(actsMap).map(([actName, chapters]) => (
-          <div key={actName} className="space-y-3">
-            {/* Act Header */}
+        {displayedGroups.map(([groupLabel, chapters]) => (
+          <div key={groupLabel} className="space-y-3">
+            {/* Section Header */}
             <div className="flex items-center justify-between border-b border-stone-800 pb-2">
               <h2 className="text-lg font-serif font-bold text-amber-300 flex items-center space-x-2">
                 <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-                <span>{actName}</span>
+                <span>{groupLabel}</span>
               </h2>
-              <span className="text-xs text-stone-400 font-mono">
-                {chapters.length} {chapters.length === 1 ? "Chapter" : "Chapters"} •{" "}
-                {chapters.reduce((sum, c) => sum + (c.content ? c.content.trim().split(/\s+/).filter(Boolean).length : 0), 0).toLocaleString()}{" "}
-                words
-              </span>
+              <div className="flex items-center space-x-3">
+                {hasMultipleActs && book.chapters.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIndexViewMode((m) => (m === "by_chapter" ? "by_act" : "by_chapter"))}
+                    className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-700 transition-colors cursor-pointer"
+                  >
+                    {indexViewMode === "by_chapter" ? "Group by Act" : "List by Chapter"}
+                  </button>
+                )}
+                <span className="text-xs text-stone-400 font-mono">
+                  {chapters.length} {chapters.length === 1 ? "Chapter" : "Chapters"} •{" "}
+                  {chapters.reduce((sum, c) => sum + (c.content ? c.content.trim().split(/\s+/).filter(Boolean).length : 0), 0).toLocaleString()}{" "}
+                  words
+                </span>
+              </div>
             </div>
 
             {/* Chapter Cards */}

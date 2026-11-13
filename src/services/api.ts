@@ -7,6 +7,7 @@ import {
   PublishingKit,
   ApplyRecommendationsResult,
   CouncilFinalSweepReport,
+  FullBookReadAuditResult,
   FootnoteReference,
   SingleFootnoteAuditResult,
   FootnoteAuditResult,
@@ -163,6 +164,12 @@ export const apiService = {
     critique?: CritiqueResult | null;
     focusArea?: "all" | "line_edits" | "pacing" | "dialogue" | "sensory" | "voice";
     specialInstructions?: string;
+    fullBookDigest?: {
+      narrativeSummary?: string;
+      globalStyleDirectives?: string[];
+      continuityLinks?: string[];
+      formattingNotes?: string;
+    };
   }): Promise<ApplyRecommendationsResult> {
     const res = await fetch("/api/agents/apply-chapter-recommendations", {
       method: "POST",
@@ -172,6 +179,22 @@ export const apiService = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || "Failed to apply council recommendations.");
+    }
+    return res.json();
+  },
+
+  // Realm Council: Full Book Read Audit (Digest whole book first, then format choices + per-chapter recommendations)
+  async performFullBookReadAudit(params: {
+    book: Partial<Book>;
+  }): Promise<FullBookReadAuditResult> {
+    const res = await fetch("/api/agents/full-book-read-audit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to perform full book read audit.");
     }
     return res.json();
   },
