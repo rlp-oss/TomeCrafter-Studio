@@ -32,6 +32,8 @@ import {
 import { Book, Chapter, IdeaOutline, FootnoteReference } from "../types";
 import { apiService } from "../services/api";
 import { BuildIdeaBox } from "./BuildIdeaBox";
+import { ManuscriptDropWindow } from "./ManuscriptDropWindow";
+import { BOOK_SIZE_PROFILES } from "../utils/manuscriptImporter";
 
 interface ChapterBuilderProps {
   book: Book;
@@ -443,7 +445,7 @@ export const ChapterBuilder: React.FC<ChapterBuilderProps> = ({
           </div>
           <div className="flex-1 text-xs">
             <p className="font-semibold text-stone-100">{draftingNotification}</p>
-            <p className="text-[11px] text-stone-400 mt-0.5">Auto-saving progress continuously to local & cloud storage</p>
+            <p className="text-[11px] text-stone-400 mt-0.5">Remember to click Save (or Ctrl/Cmd+S) when ready to persist</p>
           </div>
           <button
             onClick={() => setDraftingNotification(null)}
@@ -517,6 +519,25 @@ export const ChapterBuilder: React.FC<ChapterBuilderProps> = ({
         </div>
       </div>
 
+      {/* Full Manuscript Drop Window (Auto-expanded on newly started / empty projects) */}
+      <ManuscriptDropWindow
+        key={book.id}
+        book={book}
+        defaultExpanded={totalWords === 0}
+        onApplyImport={(updatedBook, firstChapterId, openEditor) => {
+          onUpdateBook(updatedBook);
+          const trimLabel =
+            BOOK_SIZE_PROFILES[updatedBook.formattingSettings?.trimSize || "6x9"].dimensions;
+          setDraftingNotification(
+            `Populated ${updatedBook.chapters.length} chapters and auto-formatted to ${trimLabel}.`
+          );
+          setTimeout(() => setDraftingNotification(null), 5000);
+          if (openEditor && firstChapterId) {
+            onNavigateToEditor(firstChapterId);
+          }
+        }}
+      />
+
       {/* Idea Expansion Hero Banner */}
       <div className="mb-8 p-5 rounded-2xl bg-gradient-to-r from-stone-900 via-stone-900/90 to-amber-950/30 border border-amber-500/30 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-start space-x-3.5">
@@ -584,10 +605,19 @@ export const ChapterBuilder: React.FC<ChapterBuilderProps> = ({
             <span>Est. Print Pages</span>
             <Clock className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="text-2xl font-bold font-mono text-stone-100">
-            ~{Math.max(1, Math.ceil(totalWords / 250))} pgs
-          </div>
-          <div className="text-[11px] text-stone-500 mt-1">Trade 6x9 format (~250w/pg)</div>
+          {(() => {
+            const sizeProfile = BOOK_SIZE_PROFILES[book.formattingSettings?.trimSize || "6x9"];
+            return (
+              <>
+                <div className="text-2xl font-bold font-mono text-stone-100">
+                  ~{Math.max(1, Math.ceil(totalWords / sizeProfile.wordsPerPage))} pgs
+                </div>
+                <div className="text-[11px] text-stone-500 mt-1">
+                  {sizeProfile.label} {sizeProfile.dimensions} (~{sizeProfile.wordsPerPage}w/pg)
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 

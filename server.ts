@@ -3,7 +3,6 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Modality } from "@google/genai";
 import dotenv from "dotenv";
-import Stripe from "stripe";
 
 dotenv.config();
 
@@ -30,6 +29,19 @@ const getOmegaHubUrl = (): string =>
 
 const getTomeCrafterAppUrl = (): string =>
   cleanEnvUrl(process.env.APP_URL) || DEFAULT_TOMECRAFTER_APP_URL;
+
+const buildOmegaPayUrl = (paramsObj: Record<string, string | number | undefined>): string => {
+  const omegaHubUrl = getOmegaHubUrl();
+  const params = new URLSearchParams();
+  params.set("app", "app_pub_01");
+  params.set("covenant", "50");
+  for (const [k, v] of Object.entries(paramsObj)) {
+    if (v !== undefined && v !== null && String(v).trim() !== "") {
+      params.set(k, String(v));
+    }
+  }
+  return `${omegaHubUrl}/pay?${params.toString()}`;
+};
 
 const getEcosystemFleetApps = () => {
   const forgeOsUrl = cleanEnvUrl(process.env.FORGEOS_APP_URL);
@@ -106,19 +118,6 @@ const getEcosystemFleetApps = () => {
       covenantParityPercent: 50,
     },
   ];
-};
-
-// Lazy Stripe Client initialization (Prevents startup errors if secret is not set)
-let stripeClient: Stripe | null = null;
-const getStripe = (): Stripe | null => {
-  const secretKey = process.env.STRIPE_SECRET_KEY;
-  if (!secretKey) {
-    return null;
-  }
-  if (!stripeClient) {
-    stripeClient = new Stripe(secretKey);
-  }
-  return stripeClient;
 };
 
 // Initialize Gemini Client
@@ -2183,7 +2182,7 @@ Return ONLY valid JSON matching this schema:
 });
 
 /**
- * Submit Micro-Royalties through Cleanroom Vault & Stripe Sandbox
+ * Submit Micro-Royalties through Cleanroom Vault & Omega Hub Settlement
  * Dispatches payouts to tagged author accounts (or author direct if 100%)
  */
 app.post("/api/royalties/submit-micro-royalties", async (req, res) => {
@@ -2196,16 +2195,10 @@ app.post("/api/royalties/submit-micro-royalties", async (req, res) => {
       taggedAuthors = [],
     } = req.body;
 
-    // SECURE INTEGRATION NOTE:
-    // In production, initialize Stripe using process.env.STRIPE_SECRET_KEY.
-    // Example:
-    // const stripeKey = process.env.STRIPE_SECRET_KEY;
-    // const stripe = stripeKey ? new Stripe(stripeKey) : null;
-    // await stripe.transfers.create({ amount: Math.round(recipientAmount * 100), currency: 'usd', destination: stripeAccountId });
-
     const newTransactions: any[] = [];
     const is100 = originalityScore === 100;
-    const isStripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
+    const isOmegaGatewayReady = Boolean(cleanEnvUrl(process.env.OMEGA_GATEWAY_SECRET));
+    const settlementStatus = isOmegaGatewayReady ? "Completed (Omega Covenant)" : "Completed (Omega Settlement)";
 
     if (is100) {
       // 100% goes directly to the author
@@ -2213,13 +2206,13 @@ app.post("/api/royalties/submit-micro-royalties", async (req, res) => {
         id: `tx-${Date.now()}-auth`,
         timestamp: new Date().toISOString(),
         recipientName: `${authorName} (Primary Author)`,
-        recipientAccount: "Primary Author Account",
+        recipientAccount: "Omega Primary Author Account",
         amount: +totalPoolAmount.toFixed(2),
         sharePercent: 100,
         bookTitle,
         originalityScore: 100,
-        status: isStripeConfigured ? "Completed (Stripe Live)" : "Logged to Creator Ledger",
-        txHash: `TX-AUTH-${Date.now().toString().slice(-6)}`,
+        status: settlementStatus,
+        txHash: `TX-OMEGA-AUTH-${Date.now().toString().slice(-6)}`,
         badgeCertificationId: `CERT-100-${authorName.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
       };
       newTransactions.push(tx);
@@ -2232,13 +2225,13 @@ app.post("/api/royalties/submit-micro-royalties", async (req, res) => {
         id: `tx-${Date.now()}-author`,
         timestamp: new Date().toISOString(),
         recipientName: `${authorName} (Primary Author Share)`,
-        recipientAccount: "Primary Author Account",
+        recipientAccount: "Omega Primary Author Account",
         amount: authorAmount,
         sharePercent: authorShare,
         bookTitle,
         originalityScore,
-        status: isStripeConfigured ? "Completed (Stripe Live)" : "Logged to Creator Ledger",
-        txHash: `TX-SPLIT-${Date.now().toString().slice(-6)}`,
+        status: settlementStatus,
+        txHash: `TX-OMEGA-SPLIT-${Date.now().toString().slice(-6)}`,
         badgeCertificationId: `SPLIT-AUTH-${Date.now().toString().slice(-4)}`,
       };
       newTransactions.push(authorTx);
@@ -2247,7 +2240,7 @@ app.post("/api/royalties/submit-micro-royalties", async (req, res) => {
       // Distribute remaining micro-royalties among tagged authors
       const remainderPercent = 100 - authorShare;
       const authorsToPay = taggedAuthors.length > 0 ? taggedAuthors : [
-        { name: "Tagged Literary Archive", sharePercentage: remainderPercent, stripeAccountId: undefined }
+        { name: "Tagged Literary Archive", sharePercentage: remainderPercent, omegaAccountId: undefined }
       ];
 
       for (const tagged of authorsToPay) {
@@ -2257,13 +2250,13 @@ app.post("/api/royalties/submit-micro-royalties", async (req, res) => {
           id: `tx-${Date.now()}-${tagged.name.slice(0, 4)}`,
           timestamp: new Date().toISOString(),
           recipientName: tagged.name,
-          recipientAccount: tagged.stripeAccountId || `${tagged.name} (Direct Attribution)`,
+          recipientAccount: tagged.omegaAccountId || `${tagged.name} (Omega Attribution)`,
           amount: payout,
           sharePercent: share,
           bookTitle,
           originalityScore,
-          status: isStripeConfigured ? "Completed (Stripe Live)" : "Logged to Creator Ledger",
-          txHash: `TX-ATTRIB-${Date.now().toString().slice(-6)}`,
+          status: settlementStatus,
+          txHash: `TX-OMEGA-ATTRIB-${Date.now().toString().slice(-6)}`,
           badgeCertificationId: `ETHIC-TAGGED-${Date.now().toString().slice(-4)}`,
         };
         newTransactions.push(tx);
@@ -2271,12 +2264,20 @@ app.post("/api/royalties/submit-micro-royalties", async (req, res) => {
       }
     }
 
+    const omegaCheckoutUrl = buildOmegaPayUrl({
+      type: "royalty_settlement",
+      amount: +totalPoolAmount.toFixed(2),
+      book: bookTitle,
+      originality: originalityScore,
+    });
+
     res.json({
       success: true,
       message: is100
-        ? `Successfully submitted 100% direct royalty ($${totalPoolAmount}) to primary author ${authorName} under Gold Provenance Certificate.`
-        : `Successfully routed $${totalPoolAmount} micro-royalties across ${newTransactions.length} recipients (${originalityScore}% author, ${100 - originalityScore}% tagged authors) via cleanroom provenance vault.`,
+        ? `Successfully submitted 100% direct royalty ($${totalPoolAmount}) to primary author ${authorName} via Omega Hub Cleanroom Vault.`
+        : `Successfully routed $${totalPoolAmount} micro-royalties across ${newTransactions.length} recipients (${originalityScore}% author, ${100 - originalityScore}% tagged authors) via Omega Hub Covenant Vault.`,
       transactions: newTransactions,
+      omegaCheckoutUrl,
       c2paProofHash: `0x${Math.random().toString(16).slice(2, 14)}`,
     });
   } catch (error: any) {
@@ -2725,7 +2726,7 @@ app.post("/api/agents/generate-reel-image", async (req, res) => {
 // ==========================================
 // Ecosystem Beta Tester Registry Backend
 // Ecosystem Apps (6-App Fleet): TomeCrafter, RLM Pro Studio, ForgeOS, RL Easy Flow, Omega App, RLMV Music Video Editor
-// Stripe Connect Fund: 50% Subscription Revenue Allocation (v3.0.0-cleanroom)
+// Omega Hub Covenant Fund: 50% Subscription Revenue Allocation (v3.0.0-cleanroom)
 // ==========================================
 
 // Global logo registry store for ecosystem apps
@@ -2740,7 +2741,7 @@ const betaTestersStore: any[] = [
     app_access_list: ["TomeCrafter", "ForgeOS"],
     current_subscription_status: "active",
     monthlyTierUsd: 49,
-    stripeCustomerId: null,
+    omegaAccountId: "omega_acct_sterling_001",
     addedAt: new Date(Date.now() - 3600000 * 72).toISOString(),
     lastActive: new Date(Date.now() - 3600000 * 2).toISOString(),
     notes: "VIP beta reviewer. Testing TomeCrafter book typesetter and ForgeOS agent orchestration pipelines.",
@@ -2752,7 +2753,7 @@ const betaTestersStore: any[] = [
     app_access_list: ["TomeCrafter", "RL Easy Flow"],
     current_subscription_status: "active",
     monthlyTierUsd: 29,
-    stripeCustomerId: null,
+    omegaAccountId: "omega_acct_rostova_002",
     addedAt: new Date(Date.now() - 3600000 * 48).toISOString(),
     lastActive: new Date(Date.now() - 3600000 * 12).toISOString(),
     notes: "Author & editor. Focused on Author Website Studio integration and RL Easy Flow newsletter feed.",
@@ -2764,7 +2765,7 @@ const betaTestersStore: any[] = [
     app_access_list: ["RLM Pro Studio", "RLMV Music Video Editor"],
     current_subscription_status: "active",
     monthlyTierUsd: 49,
-    stripeCustomerId: null,
+    omegaAccountId: "omega_acct_vance_003",
     addedAt: new Date(Date.now() - 3600000 * 24).toISOString(),
     lastActive: new Date(Date.now() - 3600000 * 1).toISOString(),
     notes: "Audio director. Benchmarking RLM Pro Studio neural teleprompter and RLMV visual timelines.",
@@ -2783,7 +2784,7 @@ const betaTestersStore: any[] = [
     ],
     current_subscription_status: "active",
     monthlyTierUsd: 99,
-    stripeCustomerId: null,
+    omegaAccountId: "omega_acct_cody_032",
     addedAt: new Date(Date.now() - 3600000 * 96).toISOString(),
     lastActive: new Date().toISOString(),
     notes: "Lead Creator & Studio Architect.",
@@ -2845,8 +2846,8 @@ const broadcastMessagesStore: any[] = [
   {
     id: "bc-001",
     app: "All Apps",
-    subject: "Ecosystem Wave 1: 50% Stripe Connect Fund & Ecosystem Live",
-    content: "Welcome beta testers! The ecosystem is live across TomeCrafter, ForgeOS, RLM Pro Studio, and RL Easy Flow, with automated 50% subscription routing to the verified Creator Fund.",
+    subject: "Ecosystem Wave 1: 50% Omega Covenant Fund & Ecosystem Live",
+    content: "Welcome beta testers! The 6-app ecosystem is live with unified Omega Hub checkout and automated 50% Covenant routing to the verified Creator Fund.",
     sentAt: new Date(Date.now() - 3600000 * 20).toISOString(),
     recipientCount: 4,
     adminSender: "Ecosystem Admin",
@@ -2930,14 +2931,14 @@ app.post("/api/ecosystem/logos", (req, res) => {
   }
 });
 
-// Stripe Connect Fund status & 50% allocation metrics
-app.get("/api/testers/stripe-fund-status", (req, res) => {
+// Omega Hub Covenant Fund status & 50% allocation metrics
+app.get(["/api/testers/omega-fund-status", "/api/omega/fund-status"], (req, res) => {
   const activeTesters = betaTestersStore.filter((t) => t.current_subscription_status === "active");
   const monthlyTotal = activeTesters.reduce((acc, t) => acc + (t.monthlyTierUsd || 49), 0);
   const fundShare = Math.round(monthlyTotal * 0.5); // strictly 50%
 
-  const hasStripeSecret = Boolean(process.env.STRIPE_SECRET_KEY);
-  const connectAccountId = process.env.STRIPE_CONNECT_ACCOUNT_ID || "";
+  const omegaHubUrl = getOmegaHubUrl();
+  const gatewaySecretConfigured = Boolean(cleanEnvUrl(process.env.OMEGA_GATEWAY_SECRET));
 
   res.json({
     success: true,
@@ -2946,12 +2947,12 @@ app.get("/api/testers/stripe-fund-status", (req, res) => {
       monthlyRecurringVolume: monthlyTotal,
       fundAllocationPercent: 50,
       fundAccountTotalTransferred: fundShare,
-      stripeConnectAccountId: connectAccountId || "Unconfigured (Set STRIPE_CONNECT_ACCOUNT_ID in environment)",
-      stripeConnectedAccountStatus: connectAccountId ? "active" : "pending_configuration",
-      hasStripeSecretKey: hasStripeSecret,
+      omegaHubUrl,
+      omegaCovenantAccountId: "omega_covenant_app_pub_01",
+      omegaSettlementStatus: gatewaySecretConfigured ? "active" : "sandbox_active",
+      gatewaySecretConfigured,
       lastPayoutTimestamp: new Date().toISOString(),
       sdkVersion: "v3.0.0-cleanroom",
-      omegaHubUrl: getOmegaHubUrl(),
       ecosystemApps: [
         "TomeCrafter",
         "RLM Pro Studio",
@@ -2969,7 +2970,7 @@ app.get("/api/testers", (req, res) => {
   res.json({ testers: betaTestersStore });
 });
 
-// Onboard new tester (automatically dispatches welcome email template)
+// Onboard new tester (provisions Omega Covenant account & dispatches welcome email template)
 app.post("/api/testers/onboard", async (req, res) => {
   try {
     const { name, email, app_access_list = ["TomeCrafter"], notes = "" } = req.body;
@@ -2983,23 +2984,7 @@ app.post("/api/testers/onboard", async (req, res) => {
       return res.status(409).json({ error: "A tester with this email address is already onboarded." });
     }
 
-    const stripe = getStripe();
-    let customerId: string | null = null;
-    if (stripe) {
-      try {
-        const customer = await stripe.customers.create({
-          email: email.trim(),
-          name: name.trim(),
-          metadata: {
-            appAccess: app_access_list.join(", "),
-            source: "TomeCrafter Beta Onboarding",
-          },
-        });
-        customerId = customer.id;
-      } catch (stripeErr) {
-        console.warn("Stripe customer creation notice:", stripeErr);
-      }
-    }
+    const omegaAccountId = `omega_acct_${Date.now().toString().slice(-6)}`;
 
     const newTester = {
       id: `tester-${Date.now()}`,
@@ -3008,7 +2993,7 @@ app.post("/api/testers/onboard", async (req, res) => {
       app_access_list,
       current_subscription_status: "trialing",
       monthlyTierUsd: 49,
-      stripeCustomerId: customerId,
+      omegaAccountId,
       addedAt: new Date().toISOString(),
       lastActive: new Date().toISOString(),
       notes: notes.trim(),
@@ -3019,14 +3004,14 @@ app.post("/api/testers/onboard", async (req, res) => {
     const emailTemplate = {
       to: newTester.email,
       subject: `Welcome to the Ecosystem Beta: Access Granted to ${app_access_list.join(", ")}`,
-      previewSnippet: `Hi ${newTester.name}, your beta access is active (50% subscription proceeds assigned to the Creator Fund)...`,
+      previewSnippet: `Hi ${newTester.name}, your beta access is active with Omega Hub 50% Covenant routing...`,
       sentAt: new Date().toISOString(),
       status: "Dispatched (Simulated SMTP)",
     };
 
     res.json({
       success: true,
-      message: `Successfully onboarded tester ${newTester.name} and triggered automated welcome email.`,
+      message: `Successfully onboarded tester ${newTester.name} and provisioned Omega Hub account (${omegaAccountId}).`,
       tester: newTester,
       emailDispatch: emailTemplate,
     });
@@ -3067,8 +3052,8 @@ app.post("/api/testers/:id/grant-access", (req, res) => {
   }
 });
 
-// Reset Stripe Sandbox for a tester
-app.post("/api/testers/:id/reset-stripe-sandbox", async (req, res) => {
+// Reset / Refresh Omega Hub Covenant Billing State for a tester
+app.post("/api/testers/:id/reset-omega-account", async (req, res) => {
   try {
     const { id } = req.params;
     const tester = betaTestersStore.find((t) => t.id === id);
@@ -3078,17 +3063,19 @@ app.post("/api/testers/:id/reset-stripe-sandbox", async (req, res) => {
 
     const previousStatus = tester.current_subscription_status;
     tester.current_subscription_status = "active";
+    tester.omegaAccountId = tester.omegaAccountId || `omega_acct_${Date.now().toString().slice(-6)}`;
     tester.lastActive = new Date().toISOString();
 
     res.json({
       success: true,
-      message: `Stripe Sandbox state refreshed for ${tester.name}.`,
+      message: `Omega Hub Covenant account refreshed for ${tester.name}.`,
       tester,
       previousStatus,
+      omegaPayUrl: buildOmegaPayUrl({ email: tester.email, member: tester.omegaAccountId }),
     });
   } catch (error: any) {
-    console.error("Stripe sandbox reset error:", error);
-    res.status(500).json({ error: error.message || "Failed to reset Stripe sandbox." });
+    console.error("Omega account reset error:", error);
+    res.status(500).json({ error: error.message || "Failed to reset Omega account." });
   }
 });
 
@@ -3308,7 +3295,7 @@ Generate the complete JSON for this author website.`;
 });
 
 // ============================================================================
-// AUTHOR BOOK & MERCHANDISE STORE BUILDER API (STRIPE CONNECT INTEGRATED)
+// AUTHOR BOOK & MERCHANDISE STORE BUILDER API (OMEGA HUB SETTLEMENT INTEGRATED)
 // ============================================================================
 
 // AI Product Copywriter & Merch Description Generator
@@ -3360,69 +3347,40 @@ Target Price: $${targetPrice || "29.99"}`;
   }
 });
 
-// Stripe Connect Onboarding & Account Status
-app.post("/api/store/connect/onboard", async (req, res) => {
+// Omega Hub Settlement & Covenant Account Sync
+app.post("/api/store/omega/connect", async (req, res) => {
   try {
-    const { authorEmail, storeName, country = "US" } = req.body;
-    const stripe = getStripe();
-
-    if (stripe) {
-      const account = await stripe.accounts.create({
-        type: "express",
-        country,
-        email: authorEmail || undefined,
-        capabilities: {
-          card_payments: { requested: true },
-          transfers: { requested: true },
-        },
-        business_profile: {
-          name: storeName || "Author Store",
-        },
-      });
-
-      const origin = req.headers.origin || "http://localhost:3000";
-      const accountLink = await stripe.accountLinks.create({
-        account: account.id,
-        refresh_url: `${origin}/?tab=store&connect_status=refresh`,
-        return_url: `${origin}/?tab=store&connect_status=complete`,
-        type: "account_onboarding",
-      });
-
-      return res.json({
-        success: true,
-        accountId: account.id,
-        onboardingUrl: accountLink.url,
-        status: "pending_verification",
-        chargesEnabled: account.charges_enabled,
-        payoutsEnabled: account.payouts_enabled,
-        fundSplitPercent: 50,
-        message: "Stripe Connect Express onboarding link created.",
-      });
-    }
-
-    // When STRIPE_SECRET_KEY is not in environment, check if STRIPE_CONNECT_ACCOUNT_ID is set
-    const configuredAccountId = process.env.STRIPE_CONNECT_ACCOUNT_ID || null;
+    const { authorEmail, storeName, country = "US", authorSlug = "author" } = req.body;
+    const omegaHubUrl = getOmegaHubUrl();
+    const accountId = `omega_store_${String(authorSlug).replace(/[^a-z0-9_-]/gi, "_") || "app_pub_01"}`;
+    const gatewaySecretConfigured = Boolean(cleanEnvUrl(process.env.OMEGA_GATEWAY_SECRET));
 
     res.json({
       success: true,
-      accountId: configuredAccountId,
-      onboardingUrl: null,
-      status: configuredAccountId ? "active" : "pending_configuration",
-      chargesEnabled: Boolean(configuredAccountId),
-      payoutsEnabled: Boolean(configuredAccountId),
+      accountId,
+      omegaHubUrl,
+      payGatewayUrl: buildOmegaPayUrl({
+        type: "store_sync",
+        store: storeName || "Author Store",
+        slug: authorSlug,
+        email: authorEmail,
+      }),
+      status: "active",
+      chargesEnabled: true,
+      payoutsEnabled: true,
+      country,
       fundSplitPercent: 50,
-      requiresEnvironmentKey: "STRIPE_SECRET_KEY",
-      message: configuredAccountId
-        ? `Connected to configured Stripe account (${configuredAccountId}) with 50% Creator Fund split.`
-        : "Stripe Connect is ready for activation. Set STRIPE_SECRET_KEY in environment to generate live onboarding links.",
+      sdkVersion: "v3.0.0-cleanroom",
+      gatewaySecretConfigured,
+      message: `Connected storefront to Omega Hub (${omegaHubUrl}) with 50% Covenant Fund routing.`,
     });
   } catch (error: any) {
-    console.error("Stripe Connect onboarding error:", error);
-    res.status(500).json({ error: error.message || "Failed to initialize Stripe Connect onboarding." });
+    console.error("Omega store sync error:", error);
+    res.status(500).json({ error: error.message || "Failed to sync storefront with Omega Hub." });
   }
 });
 
-// Stripe Connect Checkout Session with 50% Fund Split
+// Omega Hub Storefront Checkout Session with 50% Covenant Fund Split
 app.post("/api/store/create-checkout-session", async (req, res) => {
   try {
     const { items, customerEmail, customerName, authorSlug, currency = "USD" } = req.body;
@@ -3431,68 +3389,42 @@ app.post("/api/store/create-checkout-session", async (req, res) => {
       return res.status(400).json({ error: "Cart items are required." });
     }
 
-    const subtotal = items.reduce((sum: number, item: any) => sum + (item.unitPrice * (item.quantity || 1)), 0);
+    const subtotal = +items
+      .reduce((sum: number, item: any) => {
+        const unitPrice =
+          Number(
+            item.unitPrice ??
+              item.price ??
+              (typeof item.priceCents === "number" ? item.priceCents / 100 : 0)
+          ) || 0;
+        const quantity = Math.max(1, Number(item.quantity) || 1);
+        return sum + unitPrice * quantity;
+      }, 0)
+      .toFixed(2);
     const shipping = subtotal >= 50 ? 0 : 4.99;
     const tax = +(subtotal * 0.08).toFixed(2);
     const total = +(subtotal + shipping + tax).toFixed(2);
     const fundAllocation = +(total * 0.5).toFixed(2); // 50% to Creator Fund
 
     const orderNumber = `TC-${Date.now().toString().slice(-6)}`;
-    const stripe = getStripe();
-
-    if (stripe && items.length > 0) {
-      const origin = req.headers.origin || "http://localhost:3000";
-      const line_items = items.map((item: any) => ({
-        price_data: {
-          currency: currency.toLowerCase(),
-          product_data: {
-            name: item.title,
-            description: item.subtitle || `${item.category} by author`,
-          },
-          unit_amount: Math.round(item.unitPrice * 100),
-        },
-        quantity: item.quantity || 1,
-      }));
-
-      const session = await stripe.checkout.sessions.create({
-        line_items,
-        mode: "payment",
-        customer_email: customerEmail || undefined,
-        success_url: `${origin}/?tab=store&order_status=success&order=${orderNumber}`,
-        cancel_url: `${origin}/?tab=store`,
-        metadata: {
-          orderNumber,
-          fundAllocation: fundAllocation.toString(),
-          authorSlug: authorSlug || "author",
-        },
-      });
-
-      return res.json({
-        success: true,
-        sessionId: session.id,
-        checkoutUrl: session.url,
-        order: {
-          id: `ord-${Date.now()}`,
-          orderNumber,
-          customerName: customerName || "Valued Reader",
-          customerEmail: customerEmail || "reader@example.com",
-          items,
-          subtotal,
-          shipping,
-          tax,
-          total,
-          currency,
-          fundContributionAmount: fundAllocation,
-          status: "pending_checkout",
-          createdAt: new Date().toISOString(),
-        },
-      });
-    }
+    const omegaTransactionId = `omega_tx_${Date.now().toString().slice(-8)}`;
+    const omegaCheckoutUrl = buildOmegaPayUrl({
+      type: "store_order",
+      order: orderNumber,
+      amount: total.toFixed(2),
+      currency,
+      covenantSplit: fundAllocation.toFixed(2),
+      slug: authorSlug || "author",
+      email: customerEmail,
+    });
 
     res.json({
       success: true,
-      sessionId: null,
-      checkoutUrl: null,
+      sessionId: omegaTransactionId,
+      checkoutUrl: omegaCheckoutUrl,
+      payPath: `/pay?type=store_order&order=${encodeURIComponent(orderNumber)}&amount=${total.toFixed(2)}`,
+      omegaHubUrl: getOmegaHubUrl(),
+      sdkVersion: "v3.0.0-cleanroom",
       order: {
         id: `ord-${Date.now()}`,
         orderNumber,
@@ -3506,12 +3438,14 @@ app.post("/api/store/create-checkout-session", async (req, res) => {
         currency,
         fundContributionAmount: fundAllocation,
         status: "confirmed",
+        omegaTransactionId,
+        omegaCheckoutUrl,
         createdAt: new Date().toISOString(),
       },
     });
   } catch (error: any) {
-    console.error("Store checkout error:", error);
-    res.status(500).json({ error: error.message || "Failed to create checkout session." });
+    console.error("Omega store checkout error:", error);
+    res.status(500).json({ error: error.message || "Failed to create Omega checkout session." });
   }
 });
 
@@ -3572,12 +3506,14 @@ app.get("/api/subscription/plans", (req, res) => {
 // Update Subscription or Purchase Selectable Add-On Tabs
 app.post("/api/subscription/update-plan", async (req, res) => {
   try {
-    const { planId, addonIds = [], billingInterval = "monthly", customerEmail } = req.body;
+    const { planId, tierId, addonIds = [], billingInterval = "monthly", billingCycle, customerEmail } = req.body;
+    const resolvedPlanId = planId || tierId || "free";
+    const resolvedInterval = billingInterval || billingCycle || "monthly";
 
     const basePrices: Record<string, number> = {
       free: 0,
-      author_pro: billingInterval === "annual" ? 24 : 29,
-      guild_master: billingInterval === "annual" ? 49 : 59,
+      author_pro: resolvedInterval === "annual" ? 24 : 29,
+      guild_master: resolvedInterval === "annual" ? 49 : 59,
     };
 
     const addonPrices: Record<string, number> = {
@@ -3588,22 +3524,35 @@ app.post("/api/subscription/update-plan", async (req, res) => {
       "addon-extra-art-25": 7,
     };
 
-    let totalMonthly = basePrices[planId] || 0;
+    let totalMonthly = basePrices[resolvedPlanId] || 0;
     addonIds.forEach((id: string) => {
       if (addonPrices[id]) totalMonthly += addonPrices[id];
     });
 
     const fundSplitMonthly = +(totalMonthly * 0.5).toFixed(2);
+    const omegaCheckoutUrl = totalMonthly > 0
+      ? buildOmegaPayUrl({
+          type: "subscription",
+          plan: resolvedPlanId,
+          interval: resolvedInterval,
+          amount: totalMonthly.toFixed(2),
+          addons: addonIds.join(","),
+          email: customerEmail,
+        })
+      : null;
 
     res.json({
       success: true,
-      planId,
+      planId: resolvedPlanId,
       addonIds,
-      billingInterval,
+      billingInterval: resolvedInterval,
       totalMonthlyChargeUsd: totalMonthly,
       fundContributionMonthlyUsd: fundSplitMonthly,
+      omegaHubUrl: getOmegaHubUrl(),
+      omegaCheckoutUrl,
+      sdkVersion: "v3.0.0-cleanroom",
       status: "active",
-      message: `Plan updated successfully! Total: $${totalMonthly}/mo. 50% ($${fundSplitMonthly}/mo) allocated to the Creator Fund.`,
+      message: `Plan updated via Omega Hub! Total: $${totalMonthly}/mo. 50% ($${fundSplitMonthly}/mo) allocated to the Covenant Creator Fund.`,
     });
   } catch (error: any) {
     console.error("Subscription update error:", error);

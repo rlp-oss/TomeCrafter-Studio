@@ -312,7 +312,7 @@ export interface TaggedAuthorRoyalty {
   role: "Influenced By" | "Co-Author" | "Sampled Text" | "Stylistic Homage" | "Lore Contributor";
   sharePercentage: number; // e.g. 10 (%)
   workReferenced?: string; // e.g. "Dune / Frank Herbert"
-  stripeAccountId?: string; // e.g. "acct_test_12345"
+  omegaAccountId?: string; // e.g. "omega_acct_12345"
   walletAddress?: string;
   payoutStatus?: "Active" | "Pending" | "Verified";
   totalMicroRoyaltiesReceived?: number;
@@ -327,7 +327,7 @@ export interface MicroRoyaltyTransaction {
   sharePercent: number;
   bookTitle: string;
   originalityScore: number;
-  status: "Completed (Direct Author Allocation)" | "Completed (Attribution Share)" | "Completed (Stripe Sandbox)" | "Verified On-Chain (C2PA)" | "Pending" | string;
+  status: "Completed (Direct Author Allocation)" | "Completed (Attribution Share)" | "Completed (Omega Settlement)" | "Verified On-Chain (C2PA)" | "Pending" | string;
   txHash: string;
   badgeCertificationId: string;
 }
@@ -614,7 +614,7 @@ export type TesterAppAccess =
   | "RL Easy Flow"
   | "Omega App"
   | "RLMV Music Video Editor";
-export type StripeSubscriptionStatus = "active" | "trialing" | "past_due" | "canceled" | "sandbox_reset";
+export type OmegaSubscriptionStatus = "active" | "trialing" | "past_due" | "canceled" | "sandbox_reset";
 
 export interface EcosystemAppMeta {
   id: TesterAppAccess;
@@ -624,7 +624,7 @@ export interface EcosystemAppMeta {
   description: string;
   logoKey: string;
   defaultBadgeColor: string;
-  stripePlanPriceId: string;
+  omegaPlanId: string;
   appUrl?: string;
   status?: "Optimal" | "Unlinked";
   activationState?: "ACTIVE" | "PENDING";
@@ -641,13 +641,17 @@ export interface AppLogoRegistry {
   [key: string]: string | undefined;
 }
 
-export interface StripeConnectFundMetrics {
+export interface OmegaFundMetrics {
   totalSubscribers: number;
   monthlyRecurringVolume: number; // in USD
   fundAllocationPercent: 50; // strictly 50%
   fundAccountTotalTransferred: number; // in USD
-  stripeConnectAccountId: string;
-  stripeConnectedAccountStatus: "active" | "pending_kyc" | "simulated_connected";
+  omegaHubUrl: string;
+  omegaCovenantAccountId: string;
+  omegaSettlementStatus: "active" | "pending_gateway" | "sandbox_active";
+  gatewaySecretConfigured?: boolean;
+  sdkVersion?: string;
+  ecosystemApps?: string[];
   lastPayoutTimestamp: string;
 }
 
@@ -656,8 +660,8 @@ export interface BetaTester {
   name: string;
   email: string;
   app_access_list: TesterAppAccess[];
-  current_subscription_status: StripeSubscriptionStatus;
-  stripeCustomerId?: string;
+  current_subscription_status: OmegaSubscriptionStatus;
+  omegaAccountId?: string;
   monthlyTierUsd?: number;
   addedAt: string;
   lastActive?: string;
@@ -868,8 +872,8 @@ export interface StoreProduct {
   isFeatured: boolean;
   isDigital: boolean;
   digitalDownloadUrl?: string;
-  stripePriceId?: string;
-  stripePaymentLinkUrl?: string; // Direct Stripe Buy button link
+  omegaPlanId?: string;
+  omegaPayUrl?: string; // Direct Omega Pay button link
   externalPurchaseLinks: StoreExternalLink[];
   tags: string[];
   specs?: {
@@ -884,7 +888,7 @@ export interface StoreProduct {
   updatedAt: string;
 }
 
-export interface StoreStripeConnectConfig {
+export interface StoreOmegaSettlementConfig {
   accountId?: string;
   isConnected: boolean;
   accountStatus: "active" | "pending_verification" | "sandbox_ready" | "disconnected" | "pending_configuration" | string;
@@ -895,6 +899,7 @@ export interface StoreStripeConnectConfig {
   fundSplitActive: boolean; // 50% Creator Fund split
   fundSplitPercent: 50;
   testMode: boolean;
+  omegaHubUrl?: string;
   lastPayoutAmount?: number;
   lastPayoutDate?: string;
 }
@@ -922,7 +927,7 @@ export interface StoreConfig {
     tiktok?: string;
     patreon?: string;
   };
-  stripeConnect: StoreStripeConnectConfig;
+  omegaSettlement: StoreOmegaSettlementConfig;
   customDomain?: string;
   shareableUrl: string;
   allowGuestCheckout: boolean;
@@ -954,8 +959,9 @@ export interface StoreOrder {
   total: number;
   currency: string;
   fundContributionAmount: number; // 50% split calculated
-  status: "paid" | "processing" | "shipped" | "delivered" | "refunded";
-  stripePaymentIntentId?: string;
+  status: "paid" | "processing" | "shipped" | "delivered" | "refunded" | "pending_omega_pay" | "confirmed";
+  omegaTransactionId?: string;
+  omegaCheckoutUrl?: string;
   shippingAddress?: {
     line1: string;
     city: string;
@@ -993,7 +999,7 @@ export interface SubscriptionTier {
   limits: PlanGenerationLimits;
   includedTabs: string[]; // List of Tab IDs automatically included
   features: string[];
-  stripePriceId: string;
+  omegaPlanId: string;
   fundContributionMonthlyUsd: number; // exactly 50%
 }
 
@@ -1031,8 +1037,8 @@ export interface UserSubscriptionState {
   billingInterval: "monthly" | "annual";
   totalMonthlyChargeUsd: number;
   fundContributionMonthlyUsd: number; // 50% of total
-  stripeCustomerId?: string;
-  stripeSubscriptionId?: string;
+  omegaMemberId?: string;
+  omegaSubscriptionId?: string;
   currentPeriodEnd: string;
   usage: UserGenerationUsage;
   unlockedTabs: string[]; // All tabs accessible by base tier + add-ons

@@ -404,7 +404,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
               {/* Footer Submit */}
               <div className="pt-4 border-t border-stone-800 flex items-center justify-between">
                 <span className="text-[11px] text-stone-500 font-mono">
-                  ⚡ Auto-save will instantly track this project
+                  💾 Save changes anytime from the top bar or Ctrl/Cmd+S
                 </span>
                 <div className="flex items-center space-x-3">
                   <button

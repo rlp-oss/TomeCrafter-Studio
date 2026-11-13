@@ -53,6 +53,7 @@ import {
 import { User as FirebaseUser } from "firebase/auth";
 
 const STORAGE_KEY = "tomecrafter_books_v1";
+const AUTO_SAVE_STORAGE_KEY = "tomecrafter_autosave_enabled_v1";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
@@ -61,8 +62,16 @@ export default function App() {
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const hasMigratedInitialLocalRef = useRef<string | null>(null);
   const booksRef = useRef<Book[]>([]);
+  const dirtyBookIdsRef = useRef<Set<string>>(new Set());
 
-  // Auto-Save Tracking State
+  // Save & Auto-Save Control State (Auto-Save defaults to OFF)
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(AUTO_SAVE_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(() => {
     return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -265,58 +274,133 @@ export default function App() {
     return () => unsubscribe();
   }, [isAuthReady, currentUser]);
 
-  // Continuous Auto-Save to localStorage on every change with debounced smooth transition
-  useEffect(() => {
+  const handleManualSave = async () => {
+    const latestBooks = booksRef.current;
     setSaveStatus("saving");
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(latestBooks));
     } catch (e) {
       console.error("Failed to save books to localStorage", e);
       setSaveStatus("error");
+      showTemporaryNotice("Could not save changes to browser storage.");
       return;
     }
 
-    const timer = setTimeout(() => {
+    const formattedTime = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+    if (isAuthReady && currentUser) {
+      const idsToSave =
+        dirtyBookIdsRef.current.size > 0
+          ? Array.from(dirtyBookIdsRef.current)
+          : [activeBookId];
+      let allOk = true;
+      for (const id of idsToSave) {
+        const target = latestBooks.find((b) => b.id === id);
+        if (!target) continue;
+        const res = await saveBookToFirestore(target, currentUser.uid);
+        if (res.success) {
+          dirtyBookIdsRef.current.delete(id);
+          setCloudSyncedIds((prev) => {
+            const next = new Set(prev);
+            next.add(target.id);
+            return next;
+          });
+        } else {
+          allOk = false;
+        }
+      }
+      setLastSavedTime(formattedTime);
+      setSaveStatus(allOk ? "saved" : "error");
+      showTemporaryNotice(
+        allOk ? "Changes saved locally and synced to cloud." : "Saved locally, but cloud sync encountered an error."
+      );
+      return;
+    }
+
+    dirtyBookIdsRef.current.clear();
+    setLastSavedTime(formattedTime);
+    setSaveStatus("saved");
+    showTemporaryNotice("Changes saved locally.");
+  };
+
+  const handleToggleAutoSave = () => {
+    setAutoSaveEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(AUTO_SAVE_STORAGE_KEY, next ? "true" : "false");
+      } catch {
+        // ignore storage error
+      }
+      showTemporaryNotice(
+        next ? "Auto-Save turned ON." : "Auto-Save turned OFF (Manual Save active)."
+      );
+      return next;
+    });
+  };
+
+  // Optional Ctrl+S / Cmd+S shortcut for Manual Save
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void handleManualSave();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  // Optional Auto-Save (only runs when explicitly enabled AND user actually made edits)
+  useEffect(() => {
+    if (!autoSaveEnabled || dirtyBookIdsRef.current.size === 0) return;
+
+    const timer = setTimeout(async () => {
+      setSaveStatus("saving");
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(booksRef.current));
+      } catch (e) {
+        console.error("Failed to save books to localStorage", e);
+        setSaveStatus("error");
+        return;
+      }
+
       const formattedTime = new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
       });
+
+      if (isAuthReady && currentUser) {
+        const active = booksRef.current.find((b) => b.id === activeBookId);
+        if (active && dirtyBookIdsRef.current.has(active.id)) {
+          const res = await saveBookToFirestore(active, currentUser.uid);
+          if (res.success) {
+            dirtyBookIdsRef.current.delete(active.id);
+            setCloudSyncedIds((prev) => {
+              const next = new Set(prev);
+              next.add(active.id);
+              return next;
+            });
+            setLastSavedTime(formattedTime);
+            setSaveStatus("saved");
+          } else {
+            setSaveStatus("error");
+          }
+          return;
+        }
+      }
+
+      dirtyBookIdsRef.current.clear();
       setLastSavedTime(formattedTime);
-      if (!currentUser) {
-        setSaveStatus("saved");
-      }
-    }, 450);
+      setSaveStatus("saved");
+    }, 1500);
 
     return () => clearTimeout(timer);
-  }, [books, currentUser]);
-
-  // Debounced Sync of active book to Firestore when signed in
-  useEffect(() => {
-    if (!isAuthReady || !currentUser) return;
-    const active = books.find((b) => b.id === activeBookId);
-    if (!active) return;
-
-    const timer = setTimeout(async () => {
-      setSaveStatus("saving");
-      const res = await saveBookToFirestore(active, currentUser.uid);
-      if (res.success) {
-        setCloudSyncedIds((prev) => {
-          const next = new Set(prev);
-          next.add(active.id);
-          return next;
-        });
-        setLastSavedTime(
-          new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-        );
-        setSaveStatus("saved");
-      } else {
-        setSaveStatus("error");
-      }
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [books, activeBookId, currentUser, isAuthReady]);
+  }, [books, activeBookId, currentUser, isAuthReady, autoSaveEnabled]);
 
   const handleManualSyncAllToCloud = async () => {
     if (!currentUser) return;
@@ -331,9 +415,10 @@ export default function App() {
 
   const activeBook = books.find((b) => b.id === activeBookId) || books[0] || SAMPLE_BOOKS[0];
 
-  // Update book handler with instant auto-save feedback
+  // Update book handler (marks dirty; saves immediately only if auto-save is enabled)
   const handleUpdateBook = (updatedBook: Book) => {
-    setSaveStatus("saving");
+    dirtyBookIdsRef.current.add(updatedBook.id);
+    setSaveStatus("unsaved");
     const timestampedBook = {
       ...updatedBook,
       updatedAt: new Date().toISOString(),
@@ -451,7 +536,15 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     };
 
-    setBooks((prev) => [newBook, ...prev]);
+    setBooks((prev) => {
+      const next = [newBook, ...prev];
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setActiveBookId(newBook.id);
     setActiveTab("outline");
     setShowLandingPage(false);
@@ -471,7 +564,15 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     };
 
-    setBooks((prev) => [duplicatedBook, ...prev]);
+    setBooks((prev) => {
+      const next = [duplicatedBook, ...prev];
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setActiveBookId(duplicatedBook.id);
   };
 
@@ -496,6 +597,11 @@ export default function App() {
     }
 
     setBooks(remaining);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
+    } catch {
+      // ignore
+    }
     if (activeBookId === targetId) {
       setActiveBookId(remaining[0].id);
     }
@@ -581,6 +687,9 @@ export default function App() {
         lastSavedTime={lastSavedTime}
         isCloudSynced={!!currentUser}
         cloudSyncedCount={cloudSyncedIds.size}
+        autoSaveEnabled={autoSaveEnabled}
+        onToggleAutoSave={handleToggleAutoSave}
+        onManualSave={() => void handleManualSave()}
       />
 
       {/* Main Workspace Stage */}
@@ -599,6 +708,9 @@ export default function App() {
             activeChapterId={activeChapterIdForEditor}
             onUpdateBook={handleUpdateBook}
             onNavigateToTab={setActiveTab}
+            autoSaveEnabled={autoSaveEnabled}
+            hasUnsavedChanges={saveStatus === "unsaved"}
+            onManualSave={() => void handleManualSave()}
           />
         )}
 
@@ -782,13 +894,16 @@ export default function App() {
           );
         })()}
 
-        {/* Right Section: Continuous Auto-Save Status & Actions */}
+        {/* Right Section: Save Status & Actions */}
         <div className="flex items-center space-x-3 text-stone-400 shrink-0 w-full lg:w-auto justify-between lg:justify-end">
-          {/* Live Auto-Save Indicator */}
+          {/* Save & Auto-Save Control */}
           <AutoSaveIndicator
             status={saveStatus}
             lastSavedTime={lastSavedTime}
             isCloudSynced={!!currentUser}
+            autoSaveEnabled={autoSaveEnabled}
+            onToggleAutoSave={handleToggleAutoSave}
+            onManualSave={() => void handleManualSave()}
           />
 
           <button

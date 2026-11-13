@@ -36,6 +36,7 @@ import {
   Share2,
   Download,
   HardDrive,
+  Save,
 } from "lucide-react";
 import { Book, Chapter, ChapterIllustration, CritiqueResult, FootnoteReference, FactVerificationResult } from "../types";
 import { apiService } from "../services/api";
@@ -55,6 +56,9 @@ interface ManuscriptEditorProps {
   activeChapterId?: string;
   onUpdateBook: (updatedBook: Book) => void;
   onNavigateToTab: (tab: any) => void;
+  autoSaveEnabled?: boolean;
+  hasUnsavedChanges?: boolean;
+  onManualSave?: () => void;
 }
 
 export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
@@ -62,6 +66,9 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
   activeChapterId,
   onUpdateBook,
   onNavigateToTab,
+  autoSaveEnabled = false,
+  hasUnsavedChanges = false,
+  onManualSave,
 }) => {
   const [selectedChapterId, setSelectedChapterId] = useState<string>(
     activeChapterId || (book.chapters[0] ? book.chapters[0].id : "")
@@ -913,8 +920,28 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-400 pt-2">
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center space-x-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
-                <span>Autosaved locally</span>
+                <span
+                  className={`w-2 h-2 rounded-full inline-block ${
+                    hasUnsavedChanges ? "bg-amber-400" : "bg-emerald-400"
+                  }`}
+                />
+                <span>
+                  {autoSaveEnabled
+                    ? "Auto-save ON"
+                    : hasUnsavedChanges
+                    ? "Unsaved changes"
+                    : "Saved (Auto-save OFF)"}
+                </span>
+                {onManualSave && hasUnsavedChanges && (
+                  <button
+                    type="button"
+                    onClick={onManualSave}
+                    className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-semibold transition-colors cursor-pointer"
+                  >
+                    <Save className="w-3 h-3" />
+                    <span>Save</span>
+                  </button>
+                )}
                 <span>•</span>
                 <span>{content.length.toLocaleString()} characters</span>
               </div>

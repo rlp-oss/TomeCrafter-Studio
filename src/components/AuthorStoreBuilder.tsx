@@ -67,7 +67,7 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
 }) => {
   // Store sub-navigation
   const [activeSubTab, setActiveSubTab] = useState<
-    "products" | "ai_generator" | "links" | "stripe_connect" | "settings" | "orders" | "preview"
+    "products" | "ai_generator" | "links" | "omega_pay" | "settings" | "orders" | "preview"
   >("products");
 
   // Store data state
@@ -358,31 +358,33 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
     setNewLinkUrl("");
   };
 
-  // Stripe Connect Onboarding trigger
-  const handleStripeConnectOnboard = async () => {
+  // Omega Hub Settlement Sync trigger
+  const handleOmegaConnect = async () => {
     try {
-      const response = await axios.post("/api/store/connect/onboard", {
+      const response = await axios.post("/api/store/omega/connect", {
         authorEmail: storeConfig.contactEmail,
         storeName: storeConfig.storeName,
-        country: storeConfig.stripeConnect.country,
+        authorSlug: storeConfig.authorSlug,
+        country: storeConfig.omegaSettlement.country,
       });
 
       if (response.data?.success) {
         setStoreConfig({
           ...storeConfig,
-          stripeConnect: {
-            ...storeConfig.stripeConnect,
+          omegaSettlement: {
+            ...storeConfig.omegaSettlement,
             accountId: response.data.accountId,
+            omegaHubUrl: response.data.omegaHubUrl,
             isConnected: true,
             accountStatus: "active",
             chargesEnabled: true,
             payoutsEnabled: true,
           },
         });
-        showToast("Stripe Connect Express successfully connected with 50% Fund Routing!");
+        showToast("Omega Hub Covenant Pay connected with 50% Creator Fund routing!");
       }
     } catch (e) {
-      showToast("Failed to connect Stripe account.", "error");
+      showToast("Failed to sync storefront with Omega Hub.", "error");
     }
   };
 
@@ -433,8 +435,8 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
   const cartTotal = +(cartSubtotal + cartShipping + cartTax).toFixed(2);
   const cartFundSplit = +(cartTotal * 0.5).toFixed(2);
 
-  // Execute Simulated Stripe Checkout
-  const handleSimulateCheckout = async () => {
+  // Execute Omega Hub Checkout
+  const handleOmegaCheckout = async () => {
     if (cart.length === 0) return;
     setIsCheckingOut(true);
 
@@ -456,14 +458,17 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
       });
 
       if (response.data?.success && response.data.order) {
-        const newOrder: StoreOrder = response.data.order;
+        const newOrder: StoreOrder = {
+          ...response.data.order,
+          omegaCheckoutUrl: response.data.checkoutUrl,
+        };
         setOrders([newOrder, ...orders]);
         setCheckoutSuccessOrder(newOrder);
         setCart([]);
-        showToast("Stripe Checkout completed! 50% routed to Creator Fund.");
+        showToast("Omega Pay checkout initialized! 50% routed to Covenant Creator Fund.");
       }
     } catch (err) {
-      showToast("Checkout simulation failed.", "error");
+      showToast("Omega checkout initialization failed.", "error");
     } finally {
       setIsCheckingOut(false);
     }
@@ -493,7 +498,7 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
               <h1 className="text-lg sm:text-xl font-serif font-bold text-stone-100 flex items-center gap-2">
                 <span>Author Book & Merchandise Store Builder</span>
                 <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                  Stripe Connect
+                  Omega Pay
                 </span>
               </h1>
               <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center space-x-1">
@@ -502,7 +507,7 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
               </span>
             </div>
             <p className="text-xs text-stone-300 mt-1 max-w-3xl leading-relaxed">
-              Build your custom author storefront for signed hardcovers, paperbacks, exclusive apparel, mugs, art prints, and digital bundles with direct Stripe Connect checkout and shareable URL.
+              Build your custom author storefront for signed hardcovers, paperbacks, exclusive apparel, mugs, art prints, and digital bundles with direct Omega Hub Covenant checkout and shareable URL.
             </p>
           </div>
         </div>
@@ -583,15 +588,15 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveSubTab("stripe_connect")}
+          onClick={() => setActiveSubTab("omega_pay")}
           className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-medium transition-all ${
-            activeSubTab === "stripe_connect"
+            activeSubTab === "omega_pay"
               ? "bg-amber-500 text-stone-950 font-bold shadow"
               : "text-stone-400 hover:text-stone-200"
           }`}
         >
           <CreditCard className="w-4 h-4" />
-          <span>Stripe Connect & 50% Split</span>
+          <span>Omega Pay &amp; 50% Split</span>
         </button>
 
         <button
@@ -671,12 +676,12 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
             </div>
 
             <div className="bg-stone-900/90 border border-stone-800 rounded-2xl p-4 space-y-1">
-              <div className="text-[11px] font-mono text-stone-400 uppercase tracking-wider">Stripe Connect Status</div>
+              <div className="text-[11px] font-mono text-stone-400 uppercase tracking-wider">Omega Pay Status</div>
               <div className="text-sm font-bold text-emerald-400 flex items-center space-x-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
                 <span>Connected (Active)</span>
               </div>
-              <div className="text-[10px] text-stone-500">Express Payouts Enabled</div>
+              <div className="text-[10px] text-stone-500">v3.0.0-cleanroom Settlement</div>
             </div>
 
             <div className="bg-stone-900/90 border border-stone-800 rounded-2xl p-4 space-y-1">
@@ -990,7 +995,7 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
                     <span>Direct Author Royalty Allocation</span>
                   </div>
                   <p className="text-stone-400 text-[11px]">
-                    50% of the net transaction is immediately transferred into your Stripe Connect Creator Fund Account without third-party distributor deductions.
+                    50% of the net transaction is automatically routed through Omega Hub Covenant Settlement without third-party distributor deductions.
                   </p>
                 </div>
 
@@ -1158,9 +1163,9 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* SUB-TAB 4: STRIPE CONNECT & 50% CREATOR FUND SETUP */}
+      {/* SUB-TAB 4: OMEGA HUB PAY & 50% CREATOR FUND SETUP */}
       {/* ========================================================================= */}
-      {activeSubTab === "stripe_connect" && (
+      {activeSubTab === "omega_pay" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 space-y-4">
             <div className="bg-stone-900/90 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-5">
@@ -1168,10 +1173,10 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-2">
                     <CreditCard className="w-4 h-4" />
-                    <span>Stripe Connect Express Onboarding</span>
+                    <span>Omega Hub Covenant Pay &amp; Settlement</span>
                   </span>
                   <p className="text-xs text-stone-400 mt-1">
-                    Connect your bank account or debit card for seamless payouts and automatic 50% creator fund routing.
+                    Route all storefront purchases through the H.U.M.A.N. Initiative Omega Hub with automatic 50% Covenant parity.
                   </p>
                 </div>
                 <span className="text-[10px] font-mono px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
@@ -1182,63 +1187,80 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
               <div className="p-4 rounded-xl bg-stone-950 border border-stone-800 space-y-3">
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <span className="text-stone-500">Connected Account ID:</span>
-                    <div className="font-mono text-stone-200 font-bold">{storeConfig.stripeConnect.accountId}</div>
+                    <span className="text-stone-500">Omega Settlement ID:</span>
+                    <div className="font-mono text-stone-200 font-bold">
+                      {storeConfig.omegaSettlement.accountId || "omega_covenant_app_pub_01"}
+                    </div>
                   </div>
                   <div>
-                    <span className="text-stone-500">Payout Status:</span>
-                    <div className="font-semibold text-emerald-400">Direct Express Enabled</div>
+                    <span className="text-stone-500">Settlement Status:</span>
+                    <div className="font-semibold text-emerald-400">Omega Hub Active (v3.0.0-cleanroom)</div>
                   </div>
                   <div>
-                    <span className="text-stone-500">Operating Country:</span>
-                    <div className="font-mono text-stone-200">{storeConfig.stripeConnect.country} (USD)</div>
+                    <span className="text-stone-500">Operating Region / Currency:</span>
+                    <div className="font-mono text-stone-200">{storeConfig.omegaSettlement.country} ({storeConfig.currency})</div>
                   </div>
                   <div>
                     <span className="text-stone-500">Fund Routing Rule:</span>
-                    <div className="font-mono text-emerald-300 font-bold">50% Creator Split</div>
+                    <div className="font-mono text-emerald-300 font-bold">50% Covenant Split</div>
                   </div>
                 </div>
 
                 <div className="border-t border-stone-800 pt-3 flex items-center justify-between text-xs">
-                  <span className="text-stone-400">Last Payout Amount:</span>
-                  <span className="font-mono font-bold text-amber-400">
-                    ${storeConfig.stripeConnect.lastPayoutAmount?.toFixed(2)} on {storeConfig.stripeConnect.lastPayoutDate}
-                  </span>
+                  <span className="text-stone-400">Omega Gateway Endpoint:</span>
+                  <a
+                    href={storeConfig.omegaSettlement.omegaHubUrl || "https://human-initiative-omega-799079571356.us-west1.run.app"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-emerald-400 hover:underline truncate max-w-[260px]"
+                  >
+                    {storeConfig.omegaSettlement.omegaHubUrl || "https://human-initiative-omega-799079571356.us-west1.run.app"}
+                  </a>
                 </div>
               </div>
 
               {/* Action Buttons */}
               <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={handleStripeConnectOnboard}
+                  onClick={handleOmegaConnect}
                   className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold text-xs transition-colors flex items-center space-x-2"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Sync & Refresh Stripe Account</span>
+                  <span>Sync with Omega Hub</span>
                 </button>
+
+                <a
+                  href="/pay?app=app_pub_01&covenant=50"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs transition-colors flex items-center space-x-2"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open Omega /pay Gateway</span>
+                </a>
 
                 <button
                   onClick={() => {
                     setStoreConfig({
                       ...storeConfig,
-                      stripeConnect: {
-                        ...storeConfig.stripeConnect,
-                        testMode: !storeConfig.stripeConnect.testMode,
+                      omegaSettlement: {
+                        ...storeConfig.omegaSettlement,
+                        testMode: !storeConfig.omegaSettlement.testMode,
                       },
                     });
                     showToast(
-                      `Switched Stripe Connect to ${
-                        !storeConfig.stripeConnect.testMode ? "Test Sandbox Mode" : "Live Production Mode"
+                      `Switched Omega Settlement to ${
+                        !storeConfig.omegaSettlement.testMode ? "Sandbox Mode" : "Live Production Mode"
                       }`
                     );
                   }}
                   className={`px-4 py-2.5 rounded-xl border text-xs font-mono transition-colors ${
-                    storeConfig.stripeConnect.testMode
+                    storeConfig.omegaSettlement.testMode
                       ? "bg-amber-950/40 border-amber-500/50 text-amber-300"
                       : "bg-stone-900 border-stone-700 text-stone-300"
                   }`}
                 >
-                  Mode: {storeConfig.stripeConnect.testMode ? "Sandbox (Test)" : "Live"}
+                  Mode: {storeConfig.omegaSettlement.testMode ? "Sandbox" : "Live"}
                 </button>
               </div>
             </div>
@@ -1248,17 +1270,17 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
             <div className="bg-stone-900/90 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-4">
               <span className="text-xs font-bold uppercase tracking-wider text-stone-300 flex items-center space-x-2 border-b border-stone-800 pb-3">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>Backend Secret & Security Architecture</span>
+                <span>Omega Hub Cleanroom Architecture</span>
               </span>
 
               <p className="text-xs text-stone-400 leading-relaxed">
-                All payment intents, transfer groupings, and Stripe Connect application fee splits are calculated securely in server routes:
+                All storefront orders, royalties, and 50% Covenant allocations route through the unified Omega Hub gateway:
               </p>
 
               <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 text-[11px] font-mono text-emerald-400/90 space-y-1">
-                <div>// Server-Side Payout Calculation</div>
-                <div>application_fee = total * 0.50;</div>
-                <div>transfer_data.destination = authorStripeId;</div>
+                <div>// Omega v3.0.0-cleanroom Parity</div>
+                <div>covenant_allocation = total * 0.50;</div>
+                <div>gateway = "/pay?app=app_pub_01&amp;covenant=50";</div>
                 <div>c2pa_provenance_verified = true;</div>
               </div>
             </div>
@@ -1437,7 +1459,7 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
             <div>
               <h3 className="font-serif font-bold text-sm text-stone-100">Customer Orders & Fund Split Ledger</h3>
               <p className="text-xs text-stone-400">
-                Audited Stripe Connect transactions with automatic 50% Creator Fund allocation breakdown.
+                Audited Omega Hub transactions with automatic 50% Creator Fund allocation breakdown.
               </p>
             </div>
             <div className="text-xs font-mono px-3 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 font-bold">
@@ -1652,7 +1674,7 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* SLIDE-OUT CUSTOMER CART & STRIPE CHECKOUT DRAWER */}
+      {/* SLIDE-OUT CUSTOMER CART & OMEGA CHECKOUT DRAWER */}
       {/* ========================================================================= */}
       {isCartDrawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-stone-950/80 backdrop-blur-sm animate-fadeIn">
@@ -1718,6 +1740,33 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
               )}
             </div>
 
+              {/* ========================================================================= */}
+              {/* SLIDE-OUT CUSTOMER CART & OMEGA PAY CHECKOUT DRAWER */}
+              {/* ========================================================================= */}
+              {cart.length === 0 && checkoutSuccessOrder ? (
+                <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 space-y-3 text-xs">
+                  <div className="flex items-center space-x-2 text-emerald-300 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Order {checkoutSuccessOrder.orderNumber} Ready on Omega Hub</span>
+                  </div>
+                  <p className="text-stone-300">
+                    Total: <strong>${checkoutSuccessOrder.total.toFixed(2)}</strong> • 50% Covenant Fund:{" "}
+                    <strong className="text-emerald-300">${checkoutSuccessOrder.fundContributionAmount.toFixed(2)}</strong>
+                  </p>
+                  {checkoutSuccessOrder.omegaCheckoutUrl && (
+                    <a
+                      href={checkoutSuccessOrder.omegaCheckoutUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold flex items-center justify-center space-x-2 transition-colors"
+                    >
+                      <span>Complete Settlement in Omega Pay</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </div>
+              ) : null}
+
             {/* Checkout Bottom Sheet */}
             {cart.length > 0 && (
               <div className="space-y-4 pt-4 border-t border-stone-800">
@@ -1748,7 +1797,7 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
                     <span>50% Creator Fund Routing</span>
                   </div>
                   <div className="text-[11px] text-emerald-400 font-mono">
-                    ${cartFundSplit} goes directly to the author's verified Stripe Connect account.
+                    ${cartFundSplit} routes directly via Omega Hub Covenant Settlement.
                   </div>
                 </div>
 
@@ -1772,19 +1821,19 @@ export const AuthorStoreBuilder: React.FC<AuthorStoreBuilderProps> = ({
 
                 {/* Checkout Trigger */}
                 <button
-                  onClick={handleSimulateCheckout}
+                  onClick={handleOmegaCheckout}
                   disabled={isCheckingOut}
                   className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-xs tracking-wide shadow-xl flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
                 >
                   {isCheckingOut ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Processing Stripe Connect Checkout...</span>
+                      <span>Preparing Omega Pay Checkout...</span>
                     </>
                   ) : (
                     <>
                       <CreditCard className="w-4 h-4" />
-                      <span>Pay with Stripe Connect (${cartTotal.toFixed(2)})</span>
+                      <span>Pay with Omega Hub (${cartTotal.toFixed(2)})</span>
                     </>
                   )}
                 </button>

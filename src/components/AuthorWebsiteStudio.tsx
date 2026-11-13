@@ -87,8 +87,9 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
   const [activeTab, setActiveTab] = useState<StudioTab>("platforms");
   const [viewportMode, setViewportMode] = useState<ViewportMode>("desktop");
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
   const [lastSavedTime, setLastSavedTime] = useState<string>(new Date().toLocaleTimeString());
+  const hasMountedRef = useRef(false);
 
   // Copy feedback states
   const [copiedHtml, setCopiedHtml] = useState(false);
@@ -110,22 +111,27 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
   // Live Iframe preview ref
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Auto-save effect
+  // Track edits as unsaved rather than firing continuous auto-save writes
   useEffect(() => {
-    setSaveStatus("saving");
-    const timer = setTimeout(() => {
-      try {
-        localStorage.setItem(`author_website_${book.id}`, JSON.stringify(config));
-        apiService.saveAuthorWebsite(book.id, config).catch(() => {});
-        setSaveStatus("saved");
-        setLastSavedTime(new Date().toLocaleTimeString());
-      } catch (err) {
-        setSaveStatus("saved");
-      }
-    }, 600);
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+    setSaveStatus("unsaved");
+  }, [config]);
 
-    return () => clearTimeout(timer);
-  }, [config, book.id]);
+  const handleManualSaveWebsite = () => {
+    setSaveStatus("saving");
+    try {
+      localStorage.setItem(`author_website_${book.id}`, JSON.stringify(config));
+      apiService.saveAuthorWebsite(book.id, config).catch(() => {});
+      setSaveStatus("saved");
+      setLastSavedTime(new Date().toLocaleTimeString());
+      showToast("Author website configuration saved.");
+    } catch (err) {
+      setSaveStatus("saved");
+    }
+  };
 
   // Update preview iframe content whenever config changes
   useEffect(() => {
@@ -354,8 +360,14 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
               <span className="text-amber-400 capitalize">{config.genrePreset.replace("_", " ")}</span>
               <span>•</span>
               <span className="flex items-center space-x-1 font-mono text-[11px] text-stone-400">
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                <span>Auto-Saved {lastSavedTime}</span>
+                <CheckCircle2 className={`w-3 h-3 ${saveStatus === "unsaved" ? "text-amber-400" : "text-emerald-400"}`} />
+                <span>
+                  {saveStatus === "saving"
+                    ? "Saving..."
+                    : saveStatus === "unsaved"
+                    ? "Unsaved changes"
+                    : `Saved ${lastSavedTime}`}
+                </span>
               </span>
             </div>
           </div>
@@ -394,7 +406,20 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
             </button>
           </div>
 
-          {/* Quick Copy / Download Buttons */}
+          {/* Manual Save & Quick Copy / Download Buttons */}
+          <button
+            onClick={handleManualSaveWebsite}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+              saveStatus === "unsaved"
+                ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-500/40"
+                : "bg-stone-800 hover:bg-stone-700 text-stone-200 border-stone-700"
+            }`}
+            title="Save website configuration"
+          >
+            <Save className="w-3.5 h-3.5 text-amber-400" />
+            <span>{saveStatus === "unsaved" ? "Save Changes" : "Save Site"}</span>
+          </button>
+
           <button
             onClick={handleCopyHtml}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-semibold transition-all cursor-pointer"

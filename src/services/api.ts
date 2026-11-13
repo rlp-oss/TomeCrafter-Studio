@@ -420,7 +420,7 @@ export const apiService = {
     return res.json();
   },
 
-  // Submit Micro-Royalties via Cleanroom Vault & Stripe Sandbox
+  // Submit Micro-Royalties via Cleanroom Vault & Omega Hub Settlement
   async submitMicroRoyalties(params: {
     bookTitle: string;
     authorName: string;
@@ -582,14 +582,14 @@ export const apiService = {
     return res.json();
   },
 
-  async resetStripeSandbox(testerId: string): Promise<any> {
-    const res = await fetch(`/api/testers/${testerId}/reset-stripe-sandbox`, {
+  async resetOmegaAccount(testerId: string): Promise<any> {
+    const res = await fetch(`/api/testers/${testerId}/reset-omega-account`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "Failed to reset Stripe sandbox.");
+      throw new Error(err.error || "Failed to reset Omega account.");
     }
     return res.json();
   },

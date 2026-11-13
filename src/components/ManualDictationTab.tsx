@@ -51,11 +51,11 @@ export const ManualDictationTab: React.FC<ManualDictationTabProps> = ({
   const [micError, setMicError] = useState<string | null>(null);
   const [recognitionLang, setRecognitionLang] = useState<string>("en-US");
   const [copied, setCopied] = useState<boolean>(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<string>("All changes saved");
+  const [autoSaveStatus, setAutoSaveStatus] = useState<string>("Manual Save Mode");
   const [lastSavedTime, setLastSavedTime] = useState<Date>(new Date());
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
-  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState<boolean>(true);
+  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState<boolean>(false);
 
   const recognitionRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -303,7 +303,7 @@ export const ManualDictationTab: React.FC<ManualDictationTabProps> = ({
             </h1>
           </div>
           <p className="text-xs text-stone-400 max-w-2xl">
-            Draft your manuscript via real-time speech-to-text voice recognition, fast paste buffers, smart auto-saving, and one-click chapter injection.
+            Draft your manuscript via real-time speech-to-text voice recognition, fast paste buffers, and one-click chapter injection.
           </p>
         </div>
 

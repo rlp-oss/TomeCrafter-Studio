@@ -63,6 +63,9 @@ interface NavbarProps {
   lastSavedTime?: string | null;
   isCloudSynced?: boolean;
   cloudSyncedCount?: number;
+  autoSaveEnabled?: boolean;
+  onToggleAutoSave?: () => void;
+  onManualSave?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -81,6 +84,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   lastSavedTime = null,
   isCloudSynced = false,
   cloudSyncedCount = 0,
+  autoSaveEnabled = false,
+  onToggleAutoSave,
+  onManualSave,
 }) => {
   const [dropdownOpen, setDropdownOpen] = React.useState(false);
 
@@ -95,10 +101,10 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: "outline", label: "Chapter Builder", icon: <LayoutGrid className="w-4 h-4" /> },
     { id: "editor", label: "Manuscript Studio", icon: <Feather className="w-4 h-4" /> },
     { id: "audiobook", label: "Audiobook Studio", icon: <Headphones className="w-4 h-4" />, badge: "Voice AI / Drive" },
-    { id: "store", label: "Store & Merch", icon: <ShoppingBag className="w-4 h-4" />, badge: "Stripe Connect" },
+    { id: "store", label: "Store & Merch", icon: <ShoppingBag className="w-4 h-4" />, badge: "Omega Pay" },
     { id: "subscription", label: "Plan & Quota", icon: <Zap className="w-4 h-4" />, badge: "50% Fund" },
     { id: "social", label: "Social Media Studio", icon: <Video className="w-4 h-4" />, badge: "Reels / TikTok" },
-    { id: "dictation", label: "Voice Dictation", icon: <Mic className="w-4 h-4" />, badge: "Mic / Auto-Save" },
+    { id: "dictation", label: "Voice Dictation", icon: <Mic className="w-4 h-4" />, badge: "Voice Mic" },
     { id: "typography", label: "Fonts & Formatting", icon: <Sliders className="w-4 h-4" />, badge: "Google Fonts" },
     { id: "council", label: "Realm Council", icon: <Users className="w-4 h-4" />, badge: "6 Masters" },
     { id: "codex", label: "World Codex", icon: <Compass className="w-4 h-4" /> },
@@ -236,11 +242,14 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Actions & Integration Center */}
           <div className="flex items-center space-x-2 sm:space-x-3">
-            {/* Auto Save Live Indicator */}
+            {/* Save Status & Auto-Save Toggle */}
             <AutoSaveIndicator
               status={saveStatus}
               lastSavedTime={lastSavedTime}
               isCloudSynced={isCloudSynced}
+              autoSaveEnabled={autoSaveEnabled}
+              onToggleAutoSave={onToggleAutoSave}
+              onManualSave={onManualSave}
               compact={true}
             />
 

@@ -1,4 +1,5 @@
 import { StoreConfig, StoreProduct, StoreOrder } from "../types";
+import { OMEGA_HUB_DEFAULT_URL } from "./ecosystemLogos";
 
 export const STORE_CONFIG_KEY = "tomecrafter_store_config_v1";
 export const STORE_PRODUCTS_KEY = "tomecrafter_store_products_v1";
@@ -25,17 +26,18 @@ export const DEFAULT_STORE_CONFIG: StoreConfig = {
     instagram: "https://instagram.com/tomecrafter",
     substack: "https://substack.com/@codygermain",
   },
-  stripeConnect: {
-    accountId: undefined,
-    isConnected: false,
-    accountStatus: "pending_configuration",
-    chargesEnabled: false,
-    payoutsEnabled: false,
+  omegaSettlement: {
+    accountId: "omega_covenant_app_pub_01",
+    isConnected: true,
+    accountStatus: "active",
+    chargesEnabled: true,
+    payoutsEnabled: true,
     country: "US",
     defaultCurrency: "USD",
     fundSplitActive: true,
     fundSplitPercent: 50,
     testMode: false,
+    omegaHubUrl: OMEGA_HUB_DEFAULT_URL,
     lastPayoutAmount: 0,
   },
   customDomain: "store.codygermain.com",
@@ -277,7 +279,11 @@ export function getStoredStoreConfig(): StoreConfig {
   try {
     const saved = localStorage.getItem(STORE_CONFIG_KEY);
     if (saved) {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      if (!parsed.omegaSettlement) {
+        parsed.omegaSettlement = { ...DEFAULT_STORE_CONFIG.omegaSettlement };
+      }
+      return parsed;
     }
   } catch (e) {
     console.error("Error reading store config:", e);

@@ -16,7 +16,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     priceAnnualMonthlyUsd: 0,
     badgeLabel: "Free Forever",
     isPopular: false,
-    stripePriceId: "price_free_tier",
+    omegaPlanId: "omega_free_tier",
     fundContributionMonthlyUsd: 0,
     limits: {
       monthlyAiProseWords: 5000,
@@ -54,7 +54,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     priceAnnualMonthlyUsd: 24,
     badgeLabel: "Most Popular",
     isPopular: true,
-    stripePriceId: "price_author_pro_monthly",
+    omegaPlanId: "omega_author_pro_monthly",
     fundContributionMonthlyUsd: 14.50, // Exactly 50%
     limits: {
       monthlyAiProseWords: 60000,
@@ -85,7 +85,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
       "Realm Council (All 6 AI Master Editors & Line-by-Line Audits)",
       "KDP 300 DPI Print-Ready Typesetting & ePub formatting",
       "Full Author Website Studio with SEO & lead magnets",
-      "Full Store & Merch Builder (0% platform fee, Stripe Connect)",
+      "Full Store & Merch Builder (0% platform fee, Omega Pay)",
       "Google Drive Cloud Sync & Auto-Save",
       "🛡️ 50% ($14.50/mo) routed directly to Creator Fund",
     ],
@@ -98,7 +98,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     priceAnnualMonthlyUsd: 49,
     badgeLabel: "Full Ecosystem",
     isPopular: false,
-    stripePriceId: "price_guild_master_monthly",
+    omegaPlanId: "omega_guild_master_monthly",
     fundContributionMonthlyUsd: 29.50, // Exactly 50%
     limits: {
       monthlyAiProseWords: 200000, // Competitive, expanded but strictly capped for reliability
@@ -228,8 +228,8 @@ export const DEFAULT_USER_SUBSCRIPTION: UserSubscriptionState = {
   billingInterval: "monthly",
   totalMonthlyChargeUsd: 29.00,
   fundContributionMonthlyUsd: 14.50, // 50%
-  stripeCustomerId: "cus_sandbox_cody032",
-  stripeSubscriptionId: "sub_sandbox_authorpro_9918",
+  omegaMemberId: "omega_member_cody032",
+  omegaSubscriptionId: "omega_sub_authorpro_9918",
   currentPeriodEnd: "2026-09-21T00:00:00Z",
   usage: {
     aiProseWordsUsed: 14850,

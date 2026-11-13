@@ -50,7 +50,7 @@ export const OriginalityMeter: React.FC<OriginalityMeterProps> = ({
   const [newAuthorRole, setNewAuthorRole] = useState<TaggedAuthorRoyalty["role"]>("Influenced By");
   const [newAuthorShare, setNewAuthorShare] = useState<number>(10);
   const [newAuthorWork, setNewAuthorWork] = useState("");
-  const [newAuthorStripe, setNewAuthorStripe] = useState("");
+  const [newAuthorOmega, setNewAuthorOmega] = useState("");
 
   const defaultReport: OriginalityReport = {
     score: 100,
@@ -66,12 +66,12 @@ export const OriginalityMeter: React.FC<OriginalityMeterProps> = ({
         id: "tx-init-100",
         timestamp: new Date().toISOString(),
         recipientName: `${book.author} (Primary Author)`,
-        recipientAccount: "acct_author_primary",
+        recipientAccount: "omega_acct_author_primary",
         amount: 250.0,
         sharePercent: 100,
         bookTitle: book.title,
         originalityScore: 100,
-        status: "Completed (Stripe Sandbox)",
+        status: "Completed (Omega Settlement)",
         txHash: "0x7f4e8b919a23c4d5",
         badgeCertificationId: `CERT-100-${book.author.toUpperCase().replace(/\s+/g, "_")}`,
       },
@@ -141,7 +141,7 @@ export const OriginalityMeter: React.FC<OriginalityMeterProps> = ({
     }
   };
 
-  // Submit Micro-Royalties through Cleanroom Attribution & Stripe Sandbox
+  // Submit Micro-Royalties through Cleanroom Attribution & Omega Hub Settlement
   const handleSubmitMicroRoyalties = async () => {
     if (payoutPoolAmount <= 0) return;
     setIsSubmittingPayout(true);
@@ -193,7 +193,7 @@ export const OriginalityMeter: React.FC<OriginalityMeterProps> = ({
       role: newAuthorRole,
       sharePercentage: newAuthorShare,
       workReferenced: newAuthorWork.trim() || undefined,
-      stripeAccountId: newAuthorStripe.trim() || undefined,
+      omegaAccountId: newAuthorOmega.trim() || undefined,
       payoutStatus: "Active",
       totalMicroRoyaltiesReceived: 0,
     };
@@ -226,7 +226,7 @@ export const OriginalityMeter: React.FC<OriginalityMeterProps> = ({
 
     setNewAuthorName("");
     setNewAuthorWork("");
-    setNewAuthorStripe("");
+    setNewAuthorOmega("");
     setShowAddAuthor(false);
   };
 
@@ -620,7 +620,9 @@ export const OriginalityMeter: React.FC<OriginalityMeterProps> = ({
                     </div>
                     <div className="text-[11px] text-stone-400">
                       {ta.workReferenced ? `Ref: ${ta.workReferenced}` : "General stylistic attribution"} •{" "}
-                      <span className="font-mono text-[10px] text-emerald-400/80">Stripe: {ta.stripeAccountId}</span>
+                      <span className="font-mono text-[10px] text-emerald-400/80">
+                        Omega: {ta.omegaAccountId || "Auto-Routed"}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -656,7 +658,7 @@ export const OriginalityMeter: React.FC<OriginalityMeterProps> = ({
             </h3>
           </div>
           <span className="text-[10px] font-mono text-stone-400">
-            Stripe Sandbox & C2PA Micro-Transactions
+            Omega Hub & C2PA Micro-Transactions
           </span>
         </div>
 

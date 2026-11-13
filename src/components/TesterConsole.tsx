@@ -36,8 +36,8 @@ import {
   FeedbackItem,
   BroadcastMessage,
   TesterAppAccess,
-  StripeSubscriptionStatus,
-  StripeConnectFundMetrics,
+  OmegaSubscriptionStatus,
+  OmegaFundMetrics,
 } from "../types";
 import {
   AppLogo,
@@ -53,7 +53,7 @@ import {
  * ============================================================================
  * ECOSYSTEM TESTER ONBOARDING & COMMUNICATION CONSOLE
  * 6-App Fleet: TomeCrafter, RLM Pro Studio, ForgeOS, RL Easy Flow, Omega App, RLMV Music Video Editor
- * v3.0.0-cleanroom SDK | 50% Covenant & Stripe Connect Fund | Owner Logo Studio
+ * v3.0.0-cleanroom SDK | 50% Omega Covenant Fund | Owner Logo Studio
  * ============================================================================
  */
 
@@ -94,8 +94,8 @@ export const TesterConsole: React.FC = () => {
   const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
   const [pastBroadcasts, setPastBroadcasts] = useState<BroadcastMessage[]>([]);
 
-  // Stripe Fund & Live 6-App Fleet State
-  const [fundMetrics, setFundMetrics] = useState<StripeConnectFundMetrics | null>(null);
+  // Omega Hub Fund & Live 6-App Fleet State
+  const [fundMetrics, setFundMetrics] = useState<OmegaFundMetrics | null>(null);
   const [isLoadingFund, setIsLoadingFund] = useState(false);
   const [fleetApps, setFleetApps] = useState(() => ECOSYSTEM_APPS);
   const [omegaHubUrl, setOmegaHubUrl] = useState<string>("https://human-initiative-omega-799079571356.us-west1.run.app");
@@ -188,11 +188,11 @@ export const TesterConsole: React.FC = () => {
     }
   };
 
-  // Fetch Stripe Connect Fund Status
+  // Fetch Omega Hub Covenant Fund Status
   const fetchFundMetrics = async () => {
     setIsLoadingFund(true);
     try {
-      const response = await axios.get("/api/testers/stripe-fund-status");
+      const response = await axios.get("/api/testers/omega-fund-status");
       if (response.data && response.data.fundMetrics) {
         setFundMetrics(response.data.fundMetrics);
       }
@@ -263,7 +263,7 @@ export const TesterConsole: React.FC = () => {
   };
 
   // --------------------------------------------------------------------------
-  // 2. Status Controls: Grant Access & Reset Stripe Sandbox
+  // 2. Status Controls: Grant Access & Reset Omega Hub Account
   // --------------------------------------------------------------------------
   const handleGrantAccess = async (tester: BetaTester, appToToggle: TesterAppAccess) => {
     setActionLoadingId(`grant-${tester.id}-${appToToggle}`);
@@ -294,14 +294,14 @@ export const TesterConsole: React.FC = () => {
     }
   };
 
-  const handleResetStripeSandbox = async (tester: BetaTester) => {
-    setActionLoadingId(`stripe-${tester.id}`);
+  const handleResetOmegaAccount = async (tester: BetaTester) => {
+    setActionLoadingId(`omega-${tester.id}`);
     try {
-      const response = await axios.post(`/api/testers/${tester.id}/reset-stripe-sandbox`);
+      const response = await axios.post(`/api/testers/${tester.id}/reset-omega-account`);
 
       if (response.data.success) {
         setActionMessage({
-          text: `Stripe Sandbox reset for ${tester.name}. Test customer ID and tokens refreshed.`,
+          text: `Omega Hub Covenant billing state refreshed for ${tester.name}.`,
           type: "success",
         });
         fetchTesters();
@@ -309,7 +309,7 @@ export const TesterConsole: React.FC = () => {
       }
     } catch (err: any) {
       setActionMessage({
-        text: err.response?.data?.error || "Failed to reset Stripe Sandbox.",
+        text: err.response?.data?.error || "Failed to reset Omega Hub account.",
         type: "error",
       });
     } finally {
@@ -469,7 +469,7 @@ export const TesterConsole: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-stone-300 mt-1 max-w-3xl leading-relaxed">
-              Connected to the 6-app <strong className="text-emerald-300">H.U.M.A.N. Initiative Fleet</strong> (<strong className="text-emerald-300">TomeCrafter</strong>, <strong className="text-teal-300">RLM Pro Studio</strong>, <strong className="text-cyan-300">ForgeOS</strong>, <strong className="text-emerald-300">RL Easy Flow</strong>, <strong className="text-amber-300">Omega App</strong>, and <strong className="text-indigo-300">RLMV Studio</strong>) with unified 50% Omega Hub &amp; Stripe Connect parity.
+              Connected to the 6-app <strong className="text-emerald-300">H.U.M.A.N. Initiative Fleet</strong> (<strong className="text-emerald-300">TomeCrafter</strong>, <strong className="text-teal-300">RLM Pro Studio</strong>, <strong className="text-cyan-300">ForgeOS</strong>, <strong className="text-emerald-300">RL Easy Flow</strong>, <strong className="text-amber-300">Omega App</strong>, and <strong className="text-indigo-300">RLMV Studio</strong>) with unified 50% Omega Hub Covenant settlement.
             </p>
           </div>
         </div>
@@ -544,7 +544,7 @@ export const TesterConsole: React.FC = () => {
               }`}
             >
               <Coins className="w-3.5 h-3.5" />
-              <span>Stripe 50% Fund</span>
+              <span>Omega 50% Fund</span>
             </button>
           </div>
         </div>
@@ -670,8 +670,8 @@ export const TesterConsole: React.FC = () => {
                   <tr>
                     <th className="py-3.5 px-4 font-semibold">Beta Tester</th>
                     <th className="py-3.5 px-4 font-semibold">Ecosystem App Access</th>
-                    <th className="py-3.5 px-4 font-semibold">Stripe Sandbox (50% Fund)</th>
-                    <th className="py-3.5 px-4 font-semibold">Customer ID</th>
+                    <th className="py-3.5 px-4 font-semibold">Omega Billing (50% Fund)</th>
+                    <th className="py-3.5 px-4 font-semibold">Omega Account ID</th>
                     <th className="py-3.5 px-4 font-semibold text-right">Access Controls</th>
                   </tr>
                 </thead>
@@ -744,15 +744,15 @@ export const TesterConsole: React.FC = () => {
                               </span>
                             </div>
                             <div className="text-[10px] text-emerald-400/90 font-mono">
-                              50% → Connect Fund
+                              50% → Omega Fund
                             </div>
                           </div>
                         </td>
 
-                        {/* Customer ID */}
+                        {/* Omega Account ID */}
                         <td className="py-4 px-4">
                           <span className="font-mono text-[11px] text-stone-400 bg-stone-950 px-2 py-1 rounded border border-stone-800">
-                            {tester.stripeCustomerId || "Unassigned"}
+                            {tester.omegaAccountId || "Unassigned"}
                           </span>
                         </td>
 
@@ -784,15 +784,15 @@ export const TesterConsole: React.FC = () => {
                               );
                             })}
 
-                            {/* Reset Stripe Sandbox Button */}
+                            {/* Reset Omega Account Button */}
                             <button
-                              onClick={() => handleResetStripeSandbox(tester)}
-                              disabled={actionLoadingId === `stripe-${tester.id}`}
+                              onClick={() => handleResetOmegaAccount(tester)}
+                              disabled={actionLoadingId === `omega-${tester.id}`}
                               className="px-2 py-1 rounded bg-stone-900 hover:bg-stone-800 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono flex items-center space-x-1 transition-colors"
-                              title="Reset Stripe Sandbox Billing State"
+                              title="Refresh Omega Hub Billing State"
                             >
                               <CreditCard className="w-3 h-3" />
-                              <span>Reset Stripe</span>
+                              <span>Reset Omega</span>
                             </button>
                           </div>
                         </td>
@@ -826,7 +826,7 @@ export const TesterConsole: React.FC = () => {
                   <span>Onboard Ecosystem Beta Tester</span>
                 </span>
                 <p className="text-xs text-stone-400 mt-1">
-                  Enrolls candidate into ecosystem registry, assigns permissions across the 4 apps, provisions Stripe sandbox account, and automatically dispatches the welcome email.
+                  Enrolls candidate into ecosystem registry, assigns permissions across the 6 apps, provisions Omega Hub Covenant account, and automatically dispatches the welcome email.
                 </p>
               </div>
 
@@ -959,8 +959,8 @@ export const TesterConsole: React.FC = () => {
                     <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Access Granted: {selectedApps.join(", ")}</span>
                   </div>
-                  <div className="text-stone-300">💳 Stripe Sandbox: Active (Test Mode)</div>
-                  <div className="text-stone-400">🛡️ Fund Allocation: 50% to Stripe Connect Account</div>
+                  <div className="text-stone-300">Ω Omega Hub Pay: Active (v3.0.0-cleanroom)</div>
+                  <div className="text-stone-400">🛡️ Fund Allocation: 50% to Omega Covenant Fund</div>
                 </div>
 
                 <p className="text-stone-400 text-[11px] leading-snug">
@@ -975,7 +975,7 @@ export const TesterConsole: React.FC = () => {
                   <span>Ecosystem Standard</span>
                 </div>
                 <p className="text-stone-400 leading-relaxed">
-                  All Stripe Connect transactions and 50% fund transfers execute server-side with zero credentials exposed in client bundles.
+                  All Omega Hub settlements and 50% Covenant transfers execute server-side via v3.0.0-cleanroom with zero secrets exposed in client bundles.
                 </p>
               </div>
             </div>
@@ -1105,7 +1105,7 @@ export const TesterConsole: React.FC = () => {
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Ecosystem Wave 1: 50% Stripe Fund & Studio Suite Live"
+                    placeholder="e.g. Ecosystem Wave 1: 50% Omega Covenant Fund & Studio Suite Live"
                     value={broadcastSubject}
                     onChange={(e) => setBroadcastSubject(e.target.value)}
                     className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2.5 text-xs text-stone-200 focus:outline-none focus:border-emerald-500"
@@ -1176,7 +1176,7 @@ export const TesterConsole: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 5: STRIPE CONNECT 50% FUND ACCOUNT AUDIT & METRICS */}
+      {/* TAB 5: OMEGA HUB 50% COVENANT FUND AUDIT & METRICS */}
       {/* ========================================================================= */}
       {activeTab === "fund" && (
         <div className="space-y-6">
@@ -1188,7 +1188,7 @@ export const TesterConsole: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-serif font-bold text-lg text-stone-100">
-                    Ecosystem Stripe Connect &amp; Omega Hub 50% Covenant Fund
+                    Omega Hub 50% Covenant Fund &amp; Settlement Registry
                   </h3>
                   <p className="text-xs text-stone-400 font-mono">
                     Omega Hub Gateway:{" "}
@@ -1200,17 +1200,28 @@ export const TesterConsole: React.FC = () => {
                     >
                       {omegaHubUrl}
                     </a>
-                    {" · "}Connect:{" "}
+                    {" · "}Account:{" "}
                     <span className="text-emerald-400">
-                      {fundMetrics?.stripeConnectAccountId || "Configured via STRIPE_CONNECT_ACCOUNT_ID"}
+                      {fundMetrics?.omegaCovenantAccountId || "omega_covenant_app_pub_01"}
                     </span>
                   </p>
                 </div>
               </div>
 
-              <div className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-950 border border-emerald-500/40 text-emerald-300 text-xs font-mono">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>50% Automated Transfer Active</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href="/pay?app=app_pub_01&covenant=50"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-mono transition-colors"
+                >
+                  <span>Open Omega Pay</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </a>
+                <div className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-950 border border-emerald-500/40 text-emerald-300 text-xs font-mono">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>50% Automated Transfer Active</span>
+                </div>
               </div>
             </div>
 
@@ -1229,7 +1240,7 @@ export const TesterConsole: React.FC = () => {
                 <p className="text-2xl font-bold font-mono text-stone-100">
                   ${fundMetrics?.monthlyRecurringVolume || 226}.00
                 </p>
-                <p className="text-[10px] text-stone-400">Stripe Sandbox Billing</p>
+                <p className="text-[10px] text-stone-400">Omega Hub Billing</p>
               </div>
 
               <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/50 space-y-1">

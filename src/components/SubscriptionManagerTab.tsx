@@ -51,6 +51,7 @@ export const SubscriptionManagerTab: React.FC<SubscriptionManagerTabProps> = ({
   const [billingInterval, setBillingInterval] = useState<"monthly" | "annual">("monthly");
   const [isUpdating, setIsUpdating] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [omegaCheckoutUrl, setOmegaCheckoutUrl] = useState<string | null>(null);
 
   // Sync state changes to storage
   useEffect(() => {
@@ -86,14 +87,15 @@ export const SubscriptionManagerTab: React.FC<SubscriptionManagerTabProps> = ({
         };
         saveStoredUserSubscription(updated);
         setSubState(getStoredUserSubscription());
+        setOmegaCheckoutUrl(response.data.omegaCheckoutUrl || null);
         showToast(
           `Switched to ${
             SUBSCRIPTION_TIERS.find((t) => t.id === planId)?.name
-          } plan! 50% ($${(
+          } via Omega Hub! 50% ($${(
             (billingInterval === "annual"
               ? SUBSCRIPTION_TIERS.find((t) => t.id === planId)!.priceAnnualMonthlyUsd
               : SUBSCRIPTION_TIERS.find((t) => t.id === planId)!.priceMonthlyUsd) * 0.5
-          ).toFixed(2)}/mo) routed to Creator Fund.`
+          ).toFixed(2)}/mo) routed to Covenant Creator Fund.`
         );
       }
     } catch (e) {
@@ -112,7 +114,7 @@ export const SubscriptionManagerTab: React.FC<SubscriptionManagerTabProps> = ({
 
     setIsUpdating(true);
     try {
-      await axios.post("/api/subscription/update-plan", {
+      const response = await axios.post("/api/subscription/update-plan", {
         planId: subState.currentPlanId,
         addonIds: newAddonIds,
         billingInterval,
@@ -126,10 +128,11 @@ export const SubscriptionManagerTab: React.FC<SubscriptionManagerTabProps> = ({
       };
       saveStoredUserSubscription(updated);
       setSubState(getStoredUserSubscription());
+      setOmegaCheckoutUrl(response.data?.omegaCheckoutUrl || null);
 
       const addon = MODULAR_TAB_ADDONS.find((a) => a.id === addonId);
       if (!isCurrentlyActive) {
-        showToast(`Added '${addon?.name}' to your subscription (+ $${addon?.monthlyPriceUsd}/mo)!`);
+        showToast(`Added '${addon?.name}' via Omega Hub (+ $${addon?.monthlyPriceUsd}/mo)!`);
       } else {
         showToast(`Removed '${addon?.name}' from your subscription.`);
       }
@@ -196,8 +199,16 @@ export const SubscriptionManagerTab: React.FC<SubscriptionManagerTabProps> = ({
               </span>
             </div>
             <div className="text-[11px] font-mono text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 px-2 py-1 rounded-lg">
-              🛡️ ${subState.fundContributionMonthlyUsd.toFixed(2)}/mo to Creator Fund
+              🛡️ ${subState.fundContributionMonthlyUsd.toFixed(2)}/mo to Omega Covenant Fund
             </div>
+            <a
+              href={omegaCheckoutUrl || `/pay?app=app_pub_01&covenant=50&plan=${subState.currentPlanId}&amount=${subState.totalMonthlyChargeUsd.toFixed(2)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-center text-[11px] font-mono font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              Omega Hub Billing Gateway →
+            </a>
           </div>
         </div>
 

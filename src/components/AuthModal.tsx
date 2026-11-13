@@ -204,9 +204,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div className="flex items-start space-x-3">
                   <Cloud className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-xs font-semibold text-stone-200">Automatic Cloud Persistence</p>
+                    <p className="text-xs font-semibold text-stone-200">Cloud Sync & Backup</p>
                     <p className="text-xs text-stone-400 leading-relaxed">
-                      Your chapters, world lore codex, and cover specifications auto-save to Firebase Firestore in real time.
+                      Save and sync your chapters, world lore codex, and cover specifications to Firebase Firestore whenever you save.
                     </p>
                   </div>
                 </div>
