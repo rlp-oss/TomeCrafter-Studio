@@ -91,6 +91,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
   const [isSavingToDrive, setIsSavingToDrive] = useState(false);
   const [driveSavedStatus, setDriveSavedStatus] = useState(false);
   const [downloadedStatus, setDownloadedStatus] = useState(false);
+  const [aiImageError, setAiImageError] = useState<string | null>(null);
 
   // Active generated structure (initialized with high-craft default)
   const [diagramData, setDiagramData] = useState<DiagramStructurePayload>({
@@ -164,6 +165,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
     setIsGenerating(true);
     setAttachedStatus(false);
     setInsertedToTextStatus(false);
+    setAiImageError(null);
 
     try {
       const result = await apiService.generateDiagramStructure({
@@ -181,7 +183,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
 
       setDiagramData(result);
     } catch (err: any) {
-      alert("Diagram structure synthesis failed: " + err.message);
+      setAiImageError("Diagram structure synthesis failed: " + (err?.message || "Unknown error"));
     } finally {
       setIsGenerating(false);
     }
@@ -306,7 +308,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
       setAttachedStatus(true);
       setTimeout(() => setAttachedStatus(false), 4000);
     } catch (err: any) {
-      alert("Failed to attach plate: " + err.message);
+      setAiImageError("Failed to attach plate: " + (err?.message || "Unknown error"));
     } finally {
       setIsRenderingPlate(false);
     }
@@ -316,6 +318,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
   const handleGenerateAiDiagramImage = async () => {
     if (!activeChapter) return;
     setIsGeneratingAiImage(true);
+    setAiImageError(null);
 
     try {
       const res = await apiService.generateIllustration({
@@ -325,6 +328,12 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
         sceneContext: `Technical comparative chart for Chapter ${activeChapter.number}: ${activeChapter.title}`,
       });
 
+      if (!res.imageUrl) {
+        throw new Error(
+          "Gemini image model did not return an infographic image. Confirm a billing-enabled API key is configured in Settings -> Secrets, or use the Vector SVG Plate option."
+        );
+      }
+
       const newIll: ChapterIllustration = {
         id: `ill-ai-diag-${Date.now()}`,
         title: diagramData.title,
@@ -332,8 +341,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
         enhancedPrompt: res.enhancedPrompt,
         style: "workflow_chart",
         aspectRatio: "16:9",
-        imageUrl:
-          res.imageUrl || generateSvgPlateDataUrl(),
+        imageUrl: res.imageUrl,
         caption: `${diagramData.title} — AI Infographic Plate`,
         placement: "header",
         plateType: "workflow_chart",
@@ -360,7 +368,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
       setAttachedStatus(true);
       setTimeout(() => setAttachedStatus(false), 4000);
     } catch (err: any) {
-      alert("AI image generation encountered an issue: " + err.message);
+      setAiImageError(err?.message || "AI infographic generation failed. You can still render & attach a crisp Vector SVG Plate.");
     } finally {
       setIsGeneratingAiImage(false);
     }
@@ -410,12 +418,13 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
       setDownloadedStatus(true);
       setTimeout(() => setDownloadedStatus(false), 3000);
     } catch (e: any) {
-      alert("Download failed: " + e.message);
+      setAiImageError("Download failed: " + (e?.message || "Unknown error"));
     }
   };
 
   const handleSaveDiagramToDrive = async () => {
     setIsSavingToDrive(true);
+    setAiImageError(null);
     try {
       const dataUrl = generateSvgPlateDataUrl();
       const filename = `${diagramData.title.replace(/[^a-zA-Z0-9_-]/g, "_")}_Plate.svg`;
@@ -429,7 +438,7 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
       setDriveSavedStatus(true);
       setTimeout(() => setDriveSavedStatus(false), 4000);
     } catch (err: any) {
-      alert("Failed to save diagram to Google Drive: " + err.message);
+      setAiImageError("Failed to save diagram to Google Drive: " + (err?.message || "Unknown error"));
     } finally {
       setIsSavingToDrive(false);
     }
@@ -437,6 +446,25 @@ export const DiagramStudioTab: React.FC<DiagramStudioTabProps> = ({
 
   return (
     <div className="space-y-8">
+      {aiImageError && (
+        <div className="p-4 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs flex items-start justify-between gap-3">
+          <div className="flex items-start space-x-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-amber-300">Diagram Studio Notice</div>
+              <p className="text-amber-100/90 mt-0.5 leading-relaxed">{aiImageError}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAiImageError(null)}
+            className="text-amber-400 hover:text-amber-200 font-mono text-xs px-2 py-0.5 rounded bg-amber-500/10"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Preset Archetype Selector */}
       <div className="p-6 rounded-2xl bg-stone-900 border border-stone-800 shadow-xl space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800 pb-3">

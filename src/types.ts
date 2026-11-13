@@ -53,6 +53,12 @@ export interface ChapterIllustration {
   placement: "header" | "inline" | "fullpage" | "tail";
   diagramData?: DiagramStructurePayload;
   plateType?: "illustration" | "workflow_chart" | "comparison_table" | "infographic";
+  sourceType?: "ai_generated" | "uploaded_file" | "external_url" | "diagram_plate";
+  fileName?: string;
+  fileSizeBytes?: number;
+  mimeType?: string;
+  width?: number;
+  height?: number;
   createdAt: string;
 }
 
@@ -437,6 +443,7 @@ export interface Book {
   coverTitleFont?: string;
   coverAccentColor?: string;
   chapters: Chapter[];
+  mediaLibrary?: ChapterIllustration[];
   loreEntries: LoreEntry[];
   publishingKit: PublishingKit;
   formattingSettings: FormattingSettings;

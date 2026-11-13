@@ -62,7 +62,7 @@ service cloud.firestore {
           'id', 'userId', 'title', 'subtitle', 'author', 'genre', 'tone',
           'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
           'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
-          'chapters', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
+          'chapters', 'mediaLibrary', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
           'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
           'createdAt', 'updatedAt'
         ])
@@ -84,6 +84,7 @@ service cloud.firestore {
         && (!('coverTitleFont' in data) || (data.coverTitleFont is string && data.coverTitleFont.size() <= 80))
         && (!('coverAccentColor' in data) || (data.coverAccentColor is string && data.coverAccentColor.size() <= 40))
         && (!('chapters' in data) || (data.chapters is list && data.chapters.size() <= 300 && (data.chapters.size() == 0 || data.chapters[0] is map)))
+        && (!('mediaLibrary' in data) || (data.mediaLibrary is list && data.mediaLibrary.size() <= 200 && (data.mediaLibrary.size() == 0 || data.mediaLibrary[0] is map)))
         && (!('loreEntries' in data) || (data.loreEntries is list && data.loreEntries.size() <= 500 && (data.loreEntries.size() == 0 || data.loreEntries[0] is map)))
         && (!('publishingKit' in data) || data.publishingKit is map)
         && (!('formattingSettings' in data) || data.formattingSettings is map)
@@ -164,7 +165,7 @@ service cloud.firestore {
             'title', 'subtitle', 'author', 'genre', 'tone',
             'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
             'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
-            'chapters', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
+            'chapters', 'mediaLibrary', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
             'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
             'updatedAt'
           ])) ||
@@ -172,7 +173,7 @@ service cloud.firestore {
             'title', 'subtitle', 'author', 'genre', 'tone',
             'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
             'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
-            'chapters', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
+            'chapters', 'mediaLibrary', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
             'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
             'updatedAt'
           ]))

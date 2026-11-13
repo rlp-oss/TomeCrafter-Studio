@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   Sparkles,
   Image as ImageIcon,
@@ -28,6 +28,7 @@ import {
   AlertCircle,
   Share2,
   Ruler,
+  Upload,
 } from "lucide-react";
 import { Book, ChapterIllustration, Genre } from "../types";
 import { apiService } from "../services/api";
@@ -40,8 +41,10 @@ import {
   ArtworkBackupSummary,
 } from "../services/googleDrive";
 import { DiagramStudioTab } from "./DiagramStudioTab";
+import { IllustrationManager } from "./IllustrationManager";
 import { FullScreenCoverPreviewModal } from "./FullScreenCoverPreviewModal";
 import { calculateSpineFormatting } from "../utils/spineCalculator";
+import { processUploadedImageFile } from "../utils/mediaProcessor";
 
 interface ArtStudioProps {
   book: Book;
@@ -101,6 +104,8 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
   const [coverMaskMode, setCoverMaskMode] = useState<"vignette" | "backplate" | "cinema" | "subtle">("vignette");
   const [customCoverUrl, setCustomCoverUrl] = useState("");
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [isUploadingCover, setIsUploadingCover] = useState(false);
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
 
   // Gallery / New Scene Art State
   const [scenePrompt, setScenePrompt] = useState("");
@@ -150,6 +155,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
 
   const handleGenerateCover = async () => {
     setIsGeneratingCover(true);
+    setImageErrorNotice(null);
     try {
       const res = await apiService.generateIllustration({
         prompt: `Pure visual background artwork for book titled "${book.title}", ${book.genre}. Atmospheric, high-contrast, focal point symbolizing ${book.genre}, cinematic lighting, fine detail. MANDATORY GUARDRAIL: DO NOT RENDER ANY TEXT, WORDS, LETTERS, TITLES, OR NAMES IN THE IMAGE. Pure visual art only.`,
@@ -158,19 +164,20 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
         sceneContext: `Official Commercial Book Background Artwork for ${book.title} by ${book.author} (Dynamic typography typeset by client engine)`,
       });
 
-      const coverUrl =
-        res.imageUrl ||
-        `https://picsum.photos/seed/${encodeURIComponent(book.title)}/1000/1500`;
+      if (!res.imageUrl) {
+        setImageErrorNotice("No cover artwork was returned. Ensure a billing-enabled Gemini API key is configured in Settings > Secrets.");
+        return;
+      }
 
       onUpdateBook({
         ...book,
-        coverImageUrl: coverUrl,
+        coverImageUrl: res.imageUrl,
         coverAccentColor: coverAccentColor,
         coverTitleFont: coverTitleFont,
         updatedAt: new Date().toISOString(),
       });
     } catch (err: any) {
-      alert("Cover generation encountered an issue: " + err.message);
+      setImageErrorNotice(err?.message || "Cover generation failed.");
     } finally {
       setIsGeneratingCover(false);
     }
@@ -186,9 +193,34 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
     });
   };
 
+  const handleCoverFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setIsUploadingCover(true);
+    setImageErrorNotice(null);
+    try {
+      const processed = await processUploadedImageFile(file, { maxDimension: 1200, quality: 0.84 });
+      onUpdateBook({
+        ...book,
+        coverImageUrl: processed.dataUrl,
+        coverAccentColor: coverAccentColor,
+        coverTitleFont: coverTitleFont,
+        updatedAt: new Date().toISOString(),
+      });
+      setToastNotice(`Applied uploaded artwork "${file.name}" as Book Cover!`);
+      setTimeout(() => setToastNotice(null), 4000);
+    } catch (err: any) {
+      setImageErrorNotice(err?.message || "Cover file upload failed.");
+    } finally {
+      setIsUploadingCover(false);
+    }
+  };
+
   const handleGenerateSceneArt = async () => {
     if (!scenePrompt.trim() || !targetChapterId) return;
     setIsGeneratingSceneArt(true);
+    setImageErrorNotice(null);
 
     try {
       const res = await apiService.generateIllustration({
@@ -198,6 +230,11 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
         sceneContext: `Illustration for ${book.title}`,
       });
 
+      if (!res.imageUrl) {
+        setImageErrorNotice("No scene image was returned. Ensure a billing-enabled Gemini API key is configured in Settings > Secrets.");
+        return;
+      }
+
       const newIll: ChapterIllustration = {
         id: `ill-art-${Date.now()}`,
         title: scenePrompt.slice(0, 35),
@@ -205,9 +242,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
         enhancedPrompt: res.enhancedPrompt,
         style: sceneStyle,
         aspectRatio: sceneRatio,
-        imageUrl:
-          res.imageUrl ||
-          `https://picsum.photos/seed/${encodeURIComponent(scenePrompt)}/1200/675`,
+        imageUrl: res.imageUrl,
         placement: "header",
         createdAt: new Date().toISOString(),
       };
@@ -230,8 +265,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
 
       setScenePrompt("");
     } catch (err: any) {
-      setToastNotice("Scene art generation failed: " + (err?.message || "Unknown error"));
-      setTimeout(() => setToastNotice(null), 5000);
+      setImageErrorNotice(err?.message || "Scene art generation failed.");
     } finally {
       setIsGeneratingSceneArt(false);
     }
@@ -263,6 +297,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
   const [backupProgressPercent, setBackupProgressPercent] = useState(0);
   const [backupSummary, setBackupSummary] = useState<ArtworkBackupSummary | null>(null);
   const [toastNotice, setToastNotice] = useState<string | null>(null);
+  const [imageErrorNotice, setImageErrorNotice] = useState<string | null>(null);
   const [uploadingSingleId, setUploadingSingleId] = useState<string | null>(null);
 
   const handleBackupAllArtwork = async () => {
@@ -277,7 +312,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
       setBackupSummary(summary);
       setToastNotice(`Successfully backed up ${summary.uploadedCount} artwork assets to Google Drive folder: ${summary.folderName}`);
     } catch (err: any) {
-      alert("Google Drive Artwork Backup failed: " + (err.message || err));
+      setImageErrorNotice("Google Drive Artwork Backup failed: " + (err?.message || String(err)));
     } finally {
       setIsBackingUpArtwork(false);
       setBackupProgressMsg("");
@@ -291,7 +326,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
       setToastNotice("Complete Artwork Package (.ZIP) downloaded to your computer!");
       setTimeout(() => setToastNotice(null), 4000);
     } catch (err: any) {
-      alert("Failed to package artwork ZIP: " + (err.message || err));
+      setImageErrorNotice("Failed to package artwork ZIP: " + (err?.message || String(err)));
     } finally {
       setIsDownloadingZip(false);
     }
@@ -303,7 +338,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
       setToastNotice(`Downloaded "${filename}"`);
       setTimeout(() => setToastNotice(null), 3000);
     } catch (e: any) {
-      alert("Download failed: " + e.message);
+      setImageErrorNotice("Download failed: " + (e?.message || "Unknown error"));
     }
   };
 
@@ -312,7 +347,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
     try {
       const { blob, mimeType, extension } = await convertUrlToBlob(ill.imageUrl, ill.title || `CH_${chNum}`);
       const filename = `CH_${chNum}_${(ill.title || "Illustration").replace(/[^a-zA-Z0-9_-]/g, "_")}.${extension}`;
-      const res = await uploadBlobToGoogleDrive({
+      await uploadBlobToGoogleDrive({
         name: filename,
         blob,
         mimeType,
@@ -321,7 +356,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
       setToastNotice(`Saved "${filename}" directly to your Google Drive!`);
       setTimeout(() => setToastNotice(null), 4000);
     } catch (err: any) {
-      alert("Failed to upload plate to Google Drive: " + err.message);
+      setImageErrorNotice("Failed to upload plate to Google Drive: " + (err?.message || "Unknown error"));
     } finally {
       setUploadingSingleId(null);
     }
@@ -342,16 +377,37 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
       setToastNotice(`Saved "${filename}" directly to your Google Drive!`);
       setTimeout(() => setToastNotice(null), 4000);
     } catch (err: any) {
-      alert("Failed to upload cover to Google Drive: " + err.message);
+      setImageErrorNotice("Failed to upload cover to Google Drive: " + (err?.message || "Unknown error"));
     } finally {
       setUploadingSingleId(null);
     }
   };
 
-  const totalArtworkAssetsCount = (book.coverImage ? 1 : 0) + (book.frontCoverImage && book.frontCoverImage !== book.coverImage ? 1 : 0) + (book.coverImageUrl ? 1 : 0) + allIllustrations.length;
+  const totalIllustrationsCount = allIllustrations.length + (book.mediaLibrary?.length || 0);
+  const totalArtworkAssetsCount =
+    (book.coverImage ? 1 : 0) +
+    (book.frontCoverImage && book.frontCoverImage !== book.coverImage ? 1 : 0) +
+    (book.coverImageUrl ? 1 : 0) +
+    totalIllustrationsCount;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      {/* Error Notice Banner */}
+      {imageErrorNotice && (
+        <div className="p-3.5 rounded-2xl bg-amber-950/90 border border-amber-500/50 text-amber-200 text-xs flex items-center justify-between shadow-xl">
+          <div className="flex items-center space-x-2.5">
+            <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="font-medium">{imageErrorNotice}</span>
+          </div>
+          <button
+            onClick={() => setImageErrorNotice(null)}
+            className="text-amber-300 hover:text-white font-mono text-[11px] ml-4 shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Toast Notice */}
       {toastNotice && (
         <div className="p-3.5 rounded-2xl bg-emerald-950/90 border border-emerald-500/50 text-emerald-200 text-xs flex items-center justify-between shadow-xl animate-fadeIn">
@@ -417,7 +473,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
                   : "text-stone-400 hover:text-stone-200"
               }`}
             >
-              Manuscript Illustrations ({allIllustrations.length})
+              Illustration Manager ({totalIllustrationsCount})
             </button>
             <button
               onClick={() => setActiveSubTab("diagrams")}
@@ -667,27 +723,55 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
                 ))}
               </div>
 
-              {/* Custom Image URL or upload */}
-              <div className="pt-2 flex items-center space-x-2">
+              {/* Custom Image URL or Direct File Upload */}
+              <div className="pt-2 space-y-2">
                 <input
-                  type="text"
-                  value={customCoverUrl}
-                  onChange={(e) => setCustomCoverUrl(e.target.value)}
-                  placeholder="Or paste clean background image URL..."
-                  className="flex-1 rounded-xl bg-stone-950 border border-stone-800 text-stone-200 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  ref={coverFileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                  onChange={handleCoverFileUpload}
+                  className="hidden"
                 />
                 <button
-                  onClick={() => {
-                    if (customCoverUrl.trim()) {
-                      handleApplyCleanBackground(customCoverUrl.trim());
-                      setCustomCoverUrl("");
-                    }
-                  }}
-                  disabled={!customCoverUrl.trim()}
-                  className="px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold transition-all disabled:opacity-50"
+                  type="button"
+                  onClick={() => coverFileInputRef.current?.click()}
+                  disabled={isUploadingCover}
+                  className="w-full py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center space-x-2 transition-all disabled:opacity-50"
                 >
-                  Apply
+                  {isUploadingCover ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Uploading Cover Image...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload Custom Cover File (PNG / JPG / WebP)</span>
+                    </>
+                  )}
                 </button>
+
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={customCoverUrl}
+                    onChange={(e) => setCustomCoverUrl(e.target.value)}
+                    placeholder="Or paste clean background image URL..."
+                    className="flex-1 rounded-xl bg-stone-950 border border-stone-800 text-stone-200 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  />
+                  <button
+                    onClick={() => {
+                      if (customCoverUrl.trim()) {
+                        handleApplyCleanBackground(customCoverUrl.trim());
+                        setCustomCoverUrl("");
+                      }
+                    }}
+                    disabled={!customCoverUrl.trim()}
+                    className="px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold transition-all disabled:opacity-50"
+                  >
+                    Apply
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1021,186 +1105,8 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
           </div>
         </div>
       ) : activeSubTab === "illustrations" ? (
-        /* Manuscript Illustrations Gallery Mode */
-        <div className="space-y-8">
-          {/* Generator Form */}
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 space-y-4">
-            <div className="flex items-center space-x-2 border-b border-stone-800 pb-3">
-              <Sparkles className="w-5 h-5 text-purple-400" />
-              <h3 className="font-serif font-bold text-base text-stone-100">
-                Inscribe New Manuscript Illustration
-              </h3>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="md:col-span-2">
-                <label className="block text-stone-300 font-semibold uppercase mb-1">
-                  Scene Illustration Description
-                </label>
-                <input
-                  type="text"
-                  value={scenePrompt}
-                  onChange={(e) => setScenePrompt(e.target.value)}
-                  placeholder="e.g. Doctor Vance examining the humming violet quintessence vial in her candlelit lab..."
-                  className="w-full rounded-xl bg-stone-950 border border-stone-800 text-stone-100 p-2.5 focus:border-purple-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-stone-300 font-semibold uppercase mb-1">
-                  Bind to Chapter
-                </label>
-                <select
-                  value={targetChapterId}
-                  onChange={(e) => setTargetChapterId(e.target.value)}
-                  className="w-full rounded-xl bg-stone-950 border border-stone-800 text-stone-200 p-2.5 focus:border-purple-500 focus:outline-none"
-                >
-                  {book.chapters.map((ch) => (
-                    <option key={ch.id} value={ch.id}>
-                      CH {ch.number}: {ch.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center space-x-4 text-xs">
-                <select
-                  value={sceneStyle}
-                  onChange={(e) => setSceneStyle(e.target.value)}
-                  className="rounded-xl bg-stone-950 border border-stone-800 text-stone-200 p-2 focus:border-purple-500 focus:outline-none"
-                >
-                  <optgroup label="Artistic Styles">
-                    <option value="cinematic_digital">Cinematic Digital Art</option>
-                    <option value="epic_oil_painting">Epic Oil Painting</option>
-                    <option value="gothic_woodcut">Woodcut Engraving</option>
-                    <option value="storybook_watercolor">Storybook Watercolor</option>
-                    <option value="cyberpunk_concept">Cyberpunk Concept</option>
-                  </optgroup>
-                  <optgroup label="Diagrams, Flowcharts & Tables">
-                    <option value="workflow_chart">📊 Workflow & Process Flowchart</option>
-                    <option value="comparison_matrix">⚖️ Comparative Analysis Table</option>
-                    <option value="system_architecture">🔄 System Architecture & Network</option>
-                    <option value="infographic_table">📋 Structured Infographic & Metrics</option>
-                    <option value="technical_schematic">📐 Technical Blueprint & Schematic</option>
-                  </optgroup>
-                </select>
-              </div>
-
-              <button
-                onClick={handleGenerateSceneArt}
-                disabled={isGeneratingSceneArt || !scenePrompt.trim()}
-                className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-stone-100 font-bold text-xs transition-all disabled:opacity-50"
-              >
-                {isGeneratingSceneArt ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Painting Plate...</span>
-                  </>
-                ) : (
-                  <>
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Generate Plate</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Illustrations Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {allIllustrations.map((item, idx) => {
-              const chapterObj = book.chapters.find((c) => c.number === item.chapterNumber);
-              return (
-                <div
-                  key={idx}
-                  className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden shadow-lg group flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="relative aspect-video overflow-hidden bg-stone-950">
-                      <img
-                        src={item.illustration.imageUrl}
-                        alt={item.illustration.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[10px] font-mono text-amber-300">
-                        CH {item.chapterNumber}
-                      </div>
-                    </div>
-
-                    <div className="p-4 space-y-2 text-xs">
-                      <h4 className="font-serif font-bold text-sm text-stone-100 truncate">
-                        {item.illustration.title || `Chapter ${item.chapterNumber} Plate`}
-                      </h4>
-                      <p className="text-stone-400 text-[11px] line-clamp-2">
-                        {item.illustration.prompt}
-                      </p>
-                      <div className="text-[10px] text-purple-400 font-mono flex items-center justify-between pt-2 border-t border-stone-800">
-                        <span>{item.illustration.style}</span>
-                        <span>Placement: {item.illustration.placement}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Illustration Card Action Bar */}
-                  <div className="p-3 bg-stone-950/80 border-t border-stone-800/80 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() =>
-                        handleDownloadSingle(
-                          item.illustration.imageUrl,
-                          `CH_${item.chapterNumber}_${(item.illustration.title || "Illustration").replace(/[^a-zA-Z0-9_-]/g, "_")}.png`
-                        )
-                      }
-                      className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-[11px] font-medium transition-colors"
-                      title="Download image plate"
-                    >
-                      <Download className="w-3 h-3 text-amber-400" />
-                      <span>Download</span>
-                    </button>
-
-                    <div className="flex items-center space-x-1">
-                      <button
-                        onClick={() => handleUploadSinglePlateToDrive(item.illustration, item.chapterNumber)}
-                        disabled={uploadingSingleId === item.illustration.id}
-                        className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 text-sky-200 text-[11px] font-medium transition-colors disabled:opacity-50"
-                        title="Upload directly to Google Drive"
-                      >
-                        {uploadingSingleId === item.illustration.id ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <HardDrive className="w-3 h-3 text-sky-400" />
-                        )}
-                        <span>Drive</span>
-                      </button>
-
-                      {chapterObj && (
-                        <button
-                          onClick={() => handleDeleteIllustration(chapterObj.id, item.illustration.id)}
-                          className="p-1.5 rounded-lg text-stone-500 hover:text-red-400 hover:bg-red-950/30 transition-colors"
-                          title="Delete from Chapter"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {allIllustrations.length === 0 && (
-            <div className="text-center py-16 px-4 rounded-2xl border-2 border-dashed border-stone-800">
-              <ImageIcon className="w-12 h-12 text-stone-600 mx-auto mb-3" />
-              <h3 className="text-lg font-serif font-bold text-stone-300">No Manuscript Plates Inscribed</h3>
-              <p className="text-sm text-stone-500 max-w-md mx-auto mt-1">
-                Generate scenic visual plates to accompany your chapters.
-              </p>
-            </div>
-          )}
-        </div>
+        /* Full Manuscript Illustration & Media Manager */
+        <IllustrationManager book={book} onUpdateBook={onUpdateBook} />
       ) : (
         /* Diagrams, Flowcharts & Comparison Tables Studio */
         <DiagramStudioTab

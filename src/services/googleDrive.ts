@@ -471,17 +471,17 @@ export async function backupAllArtworkToGoogleDrive(
 
   const targets: UploadTarget[] = [];
 
-  // 1. Cover Art
-  if (book.coverImage) {
+  const activeCoverUrl = book.coverImage || book.coverImageUrl;
+  if (activeCoverUrl) {
     targets.push({
       name: `01_Full_Cover_Wrap_${cleanTitle}`,
-      url: book.coverImage,
+      url: activeCoverUrl,
       type: "cover",
       folderId: coversFolder.id,
       description: `Full cover wrap artwork for "${book.title}" by ${book.author}`,
     });
   }
-  if (book.frontCoverImage && book.frontCoverImage !== book.coverImage) {
+  if (book.frontCoverImage && book.frontCoverImage !== activeCoverUrl) {
     targets.push({
       name: `02_Front_Cover_Digital_${cleanTitle}`,
       url: book.frontCoverImage,
@@ -505,6 +505,18 @@ export async function backupAllArtworkToGoogleDrive(
         folderId: isDiagram ? diagramsFolder.id : illustrationsFolder.id,
         description: `Chapter ${ch.number} (${ch.title}): ${ill.title || "Illustration"} | Style: ${ill.style}`,
       });
+    });
+  });
+
+  // 2b. Unassigned Media Library Vault Assets
+  (book.mediaLibrary || []).forEach((ill, idx) => {
+    const cleanIllTitle = ill.title ? ill.title.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30) : `Vault_${idx + 1}`;
+    targets.push({
+      name: `VAULT_${idx + 1}_${cleanIllTitle}`,
+      url: ill.imageUrl,
+      type: "illustration",
+      folderId: illustrationsFolder.id,
+      description: `Media Vault Asset: ${ill.title || "Uploaded Illustration"}`,
     });
   });
 
@@ -609,11 +621,12 @@ export async function downloadArtworkPackageZip(book: Book): Promise<void> {
   const diagramsFolder = zip.folder("Diagrams_and_Flowcharts");
 
   // 1. Cover Art
-  if (book.coverImage && coversFolder) {
-    const { blob, extension } = await convertUrlToBlob(book.coverImage, "Full Cover Wrap");
+  const zipCoverUrl = book.coverImage || book.coverImageUrl;
+  if (zipCoverUrl && coversFolder) {
+    const { blob, extension } = await convertUrlToBlob(zipCoverUrl, "Full Cover Wrap");
     coversFolder.file(`01_Full_Cover_Wrap.${extension}`, blob);
   }
-  if (book.frontCoverImage && coversFolder) {
+  if (book.frontCoverImage && book.frontCoverImage !== zipCoverUrl && coversFolder) {
     const { blob, extension } = await convertUrlToBlob(book.frontCoverImage, "Front Cover Digital");
     coversFolder.file(`02_Front_Cover_Digital.${extension}`, blob);
   }
@@ -636,6 +649,18 @@ export async function downloadArtworkPackageZip(book: Book): Promise<void> {
         illCount++;
         illustrationsFolder.file(`CH_${ch.number}_Ill_${idx + 1}_${cleanName}.${extension}`, blob);
       }
+    }
+  }
+
+  // 2b. Unassigned Media Library Vault Assets
+  const vaultFolder = (book.mediaLibrary && book.mediaLibrary.length > 0) ? zip.folder("Media_Vault") : null;
+  for (let idx = 0; idx < (book.mediaLibrary || []).length; idx++) {
+    const ill = book.mediaLibrary![idx];
+    const cleanName = ill.title ? ill.title.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 35) : `Vault_${idx + 1}`;
+    const { blob, extension } = await convertUrlToBlob(ill.imageUrl, ill.title || `Vault ${idx + 1}`);
+    if (vaultFolder) {
+      illCount++;
+      vaultFolder.file(`VAULT_${idx + 1}_${cleanName}.${extension}`, blob);
     }
   }
 

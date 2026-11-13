@@ -14,7 +14,7 @@ import {
   Printer,
   Loader2,
 } from "lucide-react";
-import { Book, FormattingSettings } from "../types";
+import { Book, ChapterIllustration, FormattingSettings } from "../types";
 import { apiService } from "../services/api";
 
 interface AutoTypesettingProps {
@@ -76,6 +76,7 @@ export const AutoTypesetting: React.FC<AutoTypesettingProps> = ({
     chapterNumber?: number;
     act?: string;
     content?: string;
+    illustrations?: ChapterIllustration[];
     pageNumber: number;
   }
 
@@ -120,6 +121,7 @@ export const AutoTypesetting: React.FC<AutoTypesettingProps> = ({
       chapterNumber: ch.number,
       act: ch.act,
       content: ch.content || "Chapter manuscript in progress...",
+      illustrations: ch.illustrations || [],
       pageNumber: pageCounter++,
     });
   });
@@ -303,6 +305,24 @@ export const AutoTypesetting: React.FC<AutoTypesettingProps> = ({
 
           {page.type === "chapter" && (
             <div className="space-y-4">
+              {(page.illustrations || [])
+                .filter((ill) => ill.placement === "header" || ill.placement === "fullpage")
+                .map((ill) => (
+                  <figure key={ill.id} className="mb-4 rounded-lg overflow-hidden border border-stone-300 bg-stone-200/50">
+                    <img
+                      src={ill.imageUrl}
+                      alt={ill.title}
+                      className="w-full max-h-44 object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    {ill.caption && (
+                      <figcaption className="text-[10px] italic text-stone-600 text-center py-1 px-2">
+                        {ill.caption}
+                      </figcaption>
+                    )}
+                  </figure>
+                ))}
+
               <div className="text-center mb-6 pt-2">
                 <div className="text-[10px] uppercase tracking-widest text-stone-500 font-sans mb-1">
                   {page.act}
@@ -316,6 +336,24 @@ export const AutoTypesetting: React.FC<AutoTypesettingProps> = ({
               <div className="text-justify leading-relaxed whitespace-pre-line text-stone-800">
                 {page.content}
               </div>
+
+              {(page.illustrations || [])
+                .filter((ill) => ill.placement === "inline" || ill.placement === "tail")
+                .map((ill) => (
+                  <figure key={ill.id} className="mt-4 rounded-lg overflow-hidden border border-stone-300 bg-stone-200/50">
+                    <img
+                      src={ill.imageUrl}
+                      alt={ill.title}
+                      className="w-full max-h-44 object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    {ill.caption && (
+                      <figcaption className="text-[10px] italic text-stone-600 text-center py-1 px-2">
+                        {ill.caption}
+                      </figcaption>
+                    )}
+                  </figure>
+                ))}
             </div>
           )}
 

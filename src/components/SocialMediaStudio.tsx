@@ -36,6 +36,7 @@ import {
   Star,
   BookOpen,
   Compass,
+  AlertTriangle,
 } from "lucide-react";
 import { Book, Chapter, ReelProject, ReelScene, VoiceOverTrack, LogoDesignProject } from "../types";
 import { apiService } from "../services/api";
@@ -56,6 +57,7 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
   const [reelTone, setReelTone] = useState<string>("viral, dramatic, cinematic, mystery hook");
   const [reelGoal, setReelGoal] = useState<string>("book_hook_trailer");
   const [isGeneratingReel, setIsGeneratingReel] = useState(false);
+  const [studioNotice, setStudioNotice] = useState<{ type: "error" | "success"; message: string } | null>(null);
 
   // Active Project State
   const [currentReel, setCurrentReel] = useState<ReelProject>({
@@ -255,8 +257,12 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
 
       setCurrentPlaybackSceneIdx(0);
       setSceneElapsedTime(0);
+      setStudioNotice(null);
     } catch (err: any) {
-      alert(err.message || "Failed to generate social assets.");
+      setStudioNotice({
+        type: "error",
+        message: err?.message || "Failed to generate social assets.",
+      });
     } finally {
       setIsGeneratingReel(false);
     }
@@ -265,6 +271,7 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
   // Handler: Generate AI Image Backdrop for a specific Scene
   const handleGenerateSceneImage = async (sceneId: string, visualPrompt: string) => {
     setIsGeneratingImageForScene(sceneId);
+    setStudioNotice(null);
     try {
       const res = await apiService.generateReelImage({
         prompt: visualPrompt,
@@ -272,16 +279,23 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
         style: "cinematic_digital_art",
       });
 
-      if (res.imageUrl) {
-        setCurrentReel((prev) => ({
-          ...prev,
-          scenes: (prev.scenes || []).map((sc) =>
-            sc.id === sceneId ? { ...sc, visualUrl: res.imageUrl || undefined, visualType: "ai_image" } : sc
-          ),
-        }));
+      if (!res.imageUrl) {
+        throw new Error(
+          "Scene image model did not return an image. Ensure a billing-enabled Gemini API key is set in Settings -> Secrets."
+        );
       }
+
+      setCurrentReel((prev) => ({
+        ...prev,
+        scenes: (prev.scenes || []).map((sc) =>
+          sc.id === sceneId ? { ...sc, visualUrl: res.imageUrl || undefined, visualType: "ai_image" } : sc
+        ),
+      }));
     } catch (err: any) {
-      alert("Notice: Could not generate scene visual: " + err.message);
+      setStudioNotice({
+        type: "error",
+        message: err?.message || "Could not generate scene visual.",
+      });
     } finally {
       setIsGeneratingImageForScene(null);
     }
@@ -289,6 +303,7 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
 
   // Handler: AI Gemini TTS Voice Synthesis
   const handleGenerateTTSVoiceOver = async () => {
+    setStudioNotice(null);
     try {
       const script = currentReel.fullScript || (currentReel.scenes || []).map((s) => s.scriptText).join(" ");
       const res = await apiService.generateVoiceOverTTS({
@@ -312,9 +327,15 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
           speechRate: teleprompterSpeed,
         },
       }));
-      alert(`AI Voiceover synthesized successfully (${res.estimatedDurationSec}s estimated runtime)!`);
+      setStudioNotice({
+        type: "success",
+        message: `AI Voiceover synthesized successfully (${res.estimatedDurationSec}s estimated runtime)!`,
+      });
     } catch (err: any) {
-      alert("TTS synthesis notice: " + err.message);
+      setStudioNotice({
+        type: "error",
+        message: "TTS synthesis notice: " + (err?.message || "Unknown error"),
+      });
     }
   };
 
@@ -347,8 +368,11 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
       setIsMicRecording(true);
       setRecordSeconds(0);
       setIsTeleprompterRunning(true);
-    } catch (err) {
-      alert("Microphone permission required to record live voiceover.");
+    } catch {
+      setStudioNotice({
+        type: "error",
+        message: "Microphone permission required to record live voiceover.",
+      });
     }
   };
 
@@ -436,6 +460,32 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
           </button>
         </div>
       </div>
+
+      {studioNotice && (
+        <div
+          className={`p-4 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+            studioNotice.type === "error"
+              ? "bg-amber-950/50 border-amber-500/40 text-amber-200"
+              : "bg-emerald-950/50 border-emerald-500/40 text-emerald-200"
+          }`}
+        >
+          <div className="flex items-start space-x-2.5">
+            <AlertTriangle
+              className={`w-4 h-4 shrink-0 mt-0.5 ${
+                studioNotice.type === "error" ? "text-amber-400" : "text-emerald-400"
+              }`}
+            />
+            <p className="leading-relaxed">{studioNotice.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStudioNotice(null)}
+            className="text-stone-400 hover:text-stone-200 font-mono text-xs px-2 py-0.5 rounded bg-stone-900/60"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Main Studio Viewport */}
       {activeTab === "reels_creator" && (

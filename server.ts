@@ -2047,12 +2047,12 @@ Output ONLY the final image generation prompt text, no quotes or intro.`,
       ? `${finalImagePrompt}, clean modern infographic diagram, professional vector UI flowchart, clear structural blocks, sharp connecting arrows, sleek 8k publication graphic, high contrast dark theme, masterwork technical presentation`
       : `${finalImagePrompt}, pure clean background artwork, masterpiece visual art, no text, no typography, no letters, no words, no titles, no watermarks`;
 
-    // Try generating image with gemini-3.1-flash-lite-image
+    // Generate image with gemini-3.1-flash-lite-image and propagate billing/quota errors cleanly
+    const validRatios = ["1:1", "3:4", "4:3", "9:16", "16:9"];
+    const targetRatio = validRatios.includes(aspectRatio) ? aspectRatio : "16:9";
     let imageUrl = "";
-    try {
-      const validRatios = ["1:1", "3:4", "4:3", "9:16", "16:9"];
-      const targetRatio = validRatios.includes(aspectRatio) ? aspectRatio : "16:9";
 
+    try {
       const imgRes = await ai.models.generateContent({
         model: "gemini-3.1-flash-lite-image",
         contents: {
@@ -2072,19 +2072,59 @@ Output ONLY the final image generation prompt text, no quotes or intro.`,
         }
       }
     } catch (imgError: any) {
-      console.warn("Direct image generation with Gemini image model encountered:", imgError.message);
+      const rawMsg = String(imgError?.message || "");
+      const status = imgError?.status || imgError?.statusCode;
+      const isQuota =
+        status === 429 ||
+        rawMsg.includes("429") ||
+        rawMsg.includes("RESOURCE_EXHAUSTED") ||
+        rawMsg.includes("quota");
+      const isAuth =
+        status === 403 ||
+        status === 400 ||
+        rawMsg.includes("PERMISSION_DENIED") ||
+        rawMsg.includes("API_KEY_INVALID");
+
+      if (isQuota) {
+        return res.status(429).json({
+          error:
+            "Gemini image generation requires a billing-enabled API key in Settings > Secrets (free-tier image quota is 0 or exhausted).",
+          code: "RESOURCE_EXHAUSTED",
+          enhancedPrompt: finalImagePrompt,
+        });
+      }
+      if (isAuth) {
+        return res.status(403).json({
+          error:
+            "Please select a valid, billing-enabled Gemini API key in Settings > Secrets to generate images.",
+          code: "API_KEY_INVALID",
+          enhancedPrompt: finalImagePrompt,
+        });
+      }
+      return res.status(502).json({
+        error: rawMsg || "Gemini image generation failed.",
+        code: "IMAGE_GENERATION_FAILED",
+        enhancedPrompt: finalImagePrompt,
+      });
+    }
+
+    if (!imageUrl) {
+      return res.status(502).json({
+        error: "No image data was returned by the Gemini image model.",
+        code: "EMPTY_IMAGE_RESPONSE",
+        enhancedPrompt: finalImagePrompt,
+      });
     }
 
     res.json({
       enhancedPrompt: finalImagePrompt,
-      imageUrl: imageUrl || null,
+      imageUrl,
       aspectRatio,
       style,
       isDiagramOrChart,
       guardrailsEnforced: true,
     });
   } catch (error: any) {
-    console.error("Illustration generation error:", error);
     res.status(500).json({ error: error.message || "Failed to create illustration." });
   }
 });
@@ -3012,17 +3052,43 @@ app.post("/api/agents/generate-reel-image", async (req, res) => {
         }
       }
     } catch (imgError: any) {
-      console.warn("Reel scene image generation notice:", imgError.message);
+      const rawMsg = String(imgError?.message || "");
+      const status = imgError?.status || imgError?.statusCode;
+      const isQuota =
+        status === 429 ||
+        rawMsg.includes("429") ||
+        rawMsg.includes("RESOURCE_EXHAUSTED") ||
+        rawMsg.includes("quota");
+      if (isQuota) {
+        return res.status(429).json({
+          error:
+            "Gemini image generation requires a billing-enabled API key in Settings > Secrets (free-tier image quota is 0 or exhausted).",
+          code: "RESOURCE_EXHAUSTED",
+          enhancedPrompt,
+        });
+      }
+      return res.status(502).json({
+        error: rawMsg || "Failed to generate reel visual.",
+        code: "IMAGE_GENERATION_FAILED",
+        enhancedPrompt,
+      });
+    }
+
+    if (!imageUrl) {
+      return res.status(502).json({
+        error: "No image data was returned by the Gemini image model.",
+        code: "EMPTY_IMAGE_RESPONSE",
+        enhancedPrompt,
+      });
     }
 
     res.json({
       success: true,
-      imageUrl: imageUrl || null,
+      imageUrl,
       enhancedPrompt,
       aspectRatio: targetRatio,
     });
   } catch (error: any) {
-    console.error("Reel scene image generation error:", error);
     res.status(500).json({ error: error.message || "Failed to create scene visual." });
   }
 });

@@ -7,7 +7,7 @@
 4. **Book Ownership & Query Enforcement**: `/books/{bookId}` documents must carry `userId == request.auth.uid` on creation. `get`, `update`, and `delete` require `resource.data.userId == request.auth.uid` (or `isAdmin()`). `list` queries strictly require `resource.data.userId == request.auth.uid`.
 5. **Immutability & Temporal Integrity**: `id`, `userId`, and `createdAt` are immutable once created. `createdAt` must equal `request.time` on creation, and `updatedAt` must equal `request.time` on creation and every update.
 6. **Admin Isolation**: `/settings/studio` contains `authorizedAdminEmails` and studio branding; only verified admins (via `/admins/{uid}` or bootstrapped verified email `codygermain032@gmail.com`) may read or write `/settings/studio`. `/admins/{adminId}` is never client-writable.
-7. **ID Poisoning & Volumetric Bounds**: All document IDs must match `^[a-zA-Z0-9_\-]+$` and be `<= 128` chars. Every string and array field is explicitly size-bounded.
+7. **ID Poisoning & Volumetric Bounds**: All document IDs must match `^[a-zA-Z0-9_\-]+$` and be `<= 128` chars. Every string and array field is explicitly size-bounded (including `chapters <= 300`, `mediaLibrary <= 200`, `loreEntries <= 500`).
 
 ## 2. The "Dirty Dozen" Adversarial Payloads
 1. **Unauthenticated Book Read**: `GET /books/book-1` with `auth = null` -> `PERMISSION_DENIED`.
@@ -20,5 +20,5 @@
 8. **Immutable Owner Transfer on Update**: `UPDATE /books/book-10` attempting to mutate `userId` or `createdAt` -> `PERMISSION_DENIED`.
 9. **ID Poisoning (1.5KB Document ID)**: `CREATE /books/<1500_chars>` -> `PERMISSION_DENIED`.
 10. **Value Poisoning on Allowed Update Field**: `UPDATE /books/book-10` setting `title: 12345` (wrong type) or `title: <500_chars>` -> `PERMISSION_DENIED`.
-11. **Unbounded Array / Resource Exhaustion**: `CREATE /books/book-10` with `chapters` array length > 300 -> `PERMISSION_DENIED`.
+11. **Unbounded Array / Resource Exhaustion**: `CREATE /books/book-10` with `chapters` array length > 300 or `mediaLibrary` array length > 200 -> `PERMISSION_DENIED`.
 12. **Privilege Escalation via `/admins` Write**: `CREATE /admins/userA` as `userA` -> `PERMISSION_DENIED`.

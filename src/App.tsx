@@ -96,6 +96,7 @@ export default function App() {
               title,
               subtitle,
               chapters: Array.isArray(b.chapters) ? b.chapters : [],
+              mediaLibrary: Array.isArray(b.mediaLibrary) ? b.mediaLibrary : [],
               loreEntries: Array.isArray(b.loreEntries) ? b.loreEntries : [],
               originalityReport: b.originalityReport
                 ? {

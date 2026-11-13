@@ -117,6 +117,9 @@
         "chapters": {
           "type": "array"
         },
+        "mediaLibrary": {
+          "type": "array"
+        },
         "loreEntries": {
           "type": "array"
         },

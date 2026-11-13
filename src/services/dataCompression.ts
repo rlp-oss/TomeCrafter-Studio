@@ -136,9 +136,62 @@ export function minifyDeepStructures(obj: any): any {
  * Replaces excessively huge inline base64 blobs with lightweight SVG metadata plates
  * so manuscript documents remain ultra-compact for Firestore.
  */
+export function compressIllustrationArray(
+  illustrations: ChapterIllustration[],
+  fallbackLabel: string,
+  maxInlineBytes = 65536 // 64 KB
+): { illustrations: ChapterIllustration[]; compressedCount: number; bytesSaved: number } {
+  let compressedCount = 0;
+  let bytesSaved = 0;
+
+  const compressedIllustrations: ChapterIllustration[] = (illustrations || []).map((ill) => {
+    const originalUrl = ill.imageUrl || "";
+    const originalUrlBytes = calculateByteSize(originalUrl);
+
+    if (originalUrl.startsWith("data:") && originalUrlBytes > maxInlineBytes) {
+      compressedCount++;
+      const safeTitle = (ill.title || fallbackLabel).replace(/["<>]/g, "");
+      const safePrompt = (ill.prompt || "").slice(0, 80).replace(/["<>]/g, "");
+      const ratio = ill.aspectRatio || "16:9";
+
+      const svgPlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" width="100%" height="100%"><rect fill="%231a1a1a" width="100%" height="100%" rx="8"/><text fill="%23d4af37" x="50%" y="42%" text-anchor="middle" font-family="serif" font-size="14" font-weight="bold">${safeTitle}</text><text fill="%23888888" x="50%" y="60%" text-anchor="middle" font-family="sans-serif" font-size="10">${safePrompt}</text><text fill="%23666666" x="50%" y="78%" text-anchor="middle" font-family="monospace" font-size="9">Drive / Local Media Reference [${ratio}]</text></svg>`;
+
+      const saved = originalUrlBytes - calculateByteSize(svgPlaceholder);
+      bytesSaved += Math.max(0, saved);
+
+      return {
+        ...ill,
+        imageUrl: svgPlaceholder,
+        enhancedPrompt:
+          ill.enhancedPrompt === ill.prompt
+            ? undefined
+            : ill.enhancedPrompt
+            ? stripRedundantWhitespace(ill.enhancedPrompt)
+            : undefined,
+        prompt: stripRedundantWhitespace(ill.prompt || ""),
+        title: stripRedundantWhitespace(ill.title || fallbackLabel),
+        caption: ill.caption ? stripRedundantWhitespace(ill.caption) : undefined,
+      };
+    }
+
+    return {
+      ...ill,
+      prompt: stripRedundantWhitespace(ill.prompt || ""),
+      title: stripRedundantWhitespace(ill.title || fallbackLabel),
+      caption: ill.caption ? stripRedundantWhitespace(ill.caption) : undefined,
+    };
+  });
+
+  return {
+    illustrations: compressedIllustrations,
+    compressedCount,
+    bytesSaved,
+  };
+}
+
 export function compressIllustrations(
   chapters: Chapter[],
-  maxInlineBytes = 24576 // 24 KB
+  maxInlineBytes = 65536 // 64 KB
 ): { chapters: Chapter[]; compressedCount: number; bytesSaved: number } {
   let compressedCount = 0;
   let bytesSaved = 0;
@@ -148,46 +201,17 @@ export function compressIllustrations(
       return ch;
     }
 
-    const compressedIllustrations: ChapterIllustration[] = ch.illustrations.map((ill) => {
-      const originalUrl = ill.imageUrl || "";
-      const originalUrlBytes = calculateByteSize(originalUrl);
-
-      // Check if image is an oversized base64 data URL
-      if (originalUrl.startsWith("data:") && originalUrlBytes > maxInlineBytes) {
-        compressedCount++;
-        const safeTitle = (ill.title || `Chapter ${ch.number} Illustration`).replace(/["<>]/g, "");
-        const safePrompt = (ill.prompt || "").slice(0, 80).replace(/["<>]/g, "");
-        const ratio = ill.aspectRatio || "16:9";
-
-        // Generate an ultra-compact vector SVG plate placeholder (under 500 bytes)
-        const svgPlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" width="100%" height="100%"><rect fill="%231a1a1a" width="100%" height="100%" rx="8"/><text fill="%23d4af37" x="50%" y="42%" text-anchor="middle" font-family="serif" font-size="14" font-weight="bold">${safeTitle}</text><text fill="%23888888" x="50%" y="60%" text-anchor="middle" font-family="sans-serif" font-size="10">${safePrompt}</text><text fill="%23666666" x="50%" y="78%" text-anchor="middle" font-family="monospace" font-size="9">Drive / Local Media Reference [${ratio}]</text></svg>`;
-
-        const saved = originalUrlBytes - calculateByteSize(svgPlaceholder);
-        bytesSaved += Math.max(0, saved);
-
-        return {
-          ...ill,
-          imageUrl: svgPlaceholder,
-          // Remove duplicate prompt if enhancedPrompt is identical
-          enhancedPrompt:
-            ill.enhancedPrompt === ill.prompt ? undefined : ill.enhancedPrompt ? stripRedundantWhitespace(ill.enhancedPrompt) : undefined,
-          prompt: stripRedundantWhitespace(ill.prompt),
-          title: stripRedundantWhitespace(ill.title),
-          caption: ill.caption ? stripRedundantWhitespace(ill.caption) : undefined,
-        };
-      }
-
-      return {
-        ...ill,
-        prompt: stripRedundantWhitespace(ill.prompt),
-        title: stripRedundantWhitespace(ill.title),
-        caption: ill.caption ? stripRedundantWhitespace(ill.caption) : undefined,
-      };
-    });
+    const res = compressIllustrationArray(
+      ch.illustrations,
+      `Chapter ${ch.number} Illustration`,
+      maxInlineBytes
+    );
+    compressedCount += res.compressedCount;
+    bytesSaved += res.bytesSaved;
 
     return {
       ...ch,
-      illustrations: compressedIllustrations,
+      illustrations: res.illustrations,
     };
   });
 
@@ -248,7 +272,7 @@ export function compressBookForFirestore(
   options: CompressionOptions = {}
 ): CompressionResult {
   const {
-    maxInlineIllustrationBytes = 24576,
+    maxInlineIllustrationBytes = 65536,
     maxRecentTransactionsToKeep = 20,
     maxFootnoteAlternativesToKeep = 3,
   } = options;
@@ -290,20 +314,27 @@ export function compressBookForFirestore(
   });
   optimizationsApplied.push("Minified chapter prose and stripped redundant multiline whitespace");
 
-  // 2. Compress illustration media plates
+  // 2. Compress illustration media plates & unassigned media library
   const { chapters: finalChapters, compressedCount, bytesSaved } = compressIllustrations(
     processedChapters,
     maxInlineIllustrationBytes
   );
-  if (compressedCount > 0) {
+  const mediaLibRes = compressIllustrationArray(
+    rawCopy.mediaLibrary || [],
+    "Vault Media Asset",
+    maxInlineIllustrationBytes
+  );
+  const totalIllCompressed = compressedCount + mediaLibRes.compressedCount;
+  const totalIllBytesSaved = bytesSaved + mediaLibRes.bytesSaved;
+  if (totalIllCompressed > 0) {
     optimizationsApplied.push(
-      `Compressed ${compressedCount} heavy illustration data URIs (saved ${formatBytes(bytesSaved)})`
+      `Compressed ${totalIllCompressed} heavy illustration data URIs (saved ${formatBytes(totalIllBytesSaved)})`
     );
   }
 
   // 3. Compress Cover Image if massive Base64
   let coverImageUrl = rawCopy.coverImageUrl || "";
-  if (coverImageUrl.startsWith("data:") && calculateByteSize(coverImageUrl) > 40000) {
+  if (coverImageUrl.startsWith("data:") && calculateByteSize(coverImageUrl) > 120000) {
     coverImageUrl = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?q=80&w=1000&auto=format&fit=crop";
     optimizationsApplied.push("Replaced oversized inline cover base64 with cloud reference URL");
   }
@@ -388,6 +419,7 @@ export function compressBookForFirestore(
     coverTitleFont: rawCopy.coverTitleFont ? String(rawCopy.coverTitleFont).slice(0, 80) : undefined,
     coverAccentColor: rawCopy.coverAccentColor ? String(rawCopy.coverAccentColor).slice(0, 40) : undefined,
     chapters: finalChapters.slice(0, 300),
+    mediaLibrary: mediaLibRes.illustrations.length > 0 ? mediaLibRes.illustrations.slice(0, 200) : undefined,
     loreEntries: compressedLoreEntries.slice(0, 500),
     publishingKit: publishingKit,
     formattingSettings: rawCopy.formattingSettings || {},
@@ -485,6 +517,7 @@ export function decompressBookFromFirestore(docData: Record<string, any>): Book 
           footnotes: Array.isArray(ch.footnotes) ? ch.footnotes : [],
         }))
       : [],
+    mediaLibrary: Array.isArray(docData.mediaLibrary) ? docData.mediaLibrary : [],
     loreEntries: Array.isArray(docData.loreEntries)
       ? docData.loreEntries.map((l: any) => ({
           id: l.id || `lore-${Date.now()}`,

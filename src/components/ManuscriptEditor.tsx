@@ -37,6 +37,8 @@ import {
   Download,
   HardDrive,
   Save,
+  Upload,
+  FolderOpen,
 } from "lucide-react";
 import { Book, Chapter, ChapterIllustration, CritiqueResult, FootnoteReference, FactVerificationResult } from "../types";
 import { apiService } from "../services/api";
@@ -50,6 +52,7 @@ import { ReadabilityBadge } from "./ReadabilityBadge";
 import { OriginalityMeter } from "./OriginalityMeter";
 import { FootnoteVerificationSuite } from "./FootnoteVerificationSuite";
 import { SubstackArticleModal } from "./SubstackArticleModal";
+import { processUploadedImageFile } from "../utils/mediaProcessor";
 
 interface ManuscriptEditorProps {
   book: Book;
@@ -104,6 +107,8 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
   const [artStyle, setArtStyle] = useState("cinematic_digital");
   const [artPlacement, setArtPlacement] = useState<"header" | "inline" | "fullpage" | "tail">("header");
   const [isGeneratingArt, setIsGeneratingArt] = useState(false);
+  const [isUploadingChapterArt, setIsUploadingChapterArt] = useState(false);
+  const chapterArtUploadRef = useRef<HTMLInputElement>(null);
 
   // Substack Article Generator State
   const [isSubstackModalOpen, setIsSubstackModalOpen] = useState(false);
@@ -503,6 +508,7 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
   const handleGenerateChapterIllustration = async () => {
     if (!artPrompt.trim()) return;
     setIsGeneratingArt(true);
+    setAiNotification(null);
 
     try {
       const res = await apiService.generateIllustration({
@@ -512,6 +518,12 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
         sceneContext: `Chapter ${activeChapter?.number}: ${activeChapter?.title} in ${book.title}`,
       });
 
+      if (!res.imageUrl) {
+        throw new Error(
+          "Image generation returned no visual. Please verify a billing-enabled Gemini API key is active in Settings -> Secrets."
+        );
+      }
+
       const newIllustration: ChapterIllustration = {
         id: `ill-${Date.now()}`,
         title: artPrompt.slice(0, 40),
@@ -519,11 +531,10 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
         enhancedPrompt: res.enhancedPrompt,
         style: artStyle,
         aspectRatio: "16:9",
-        imageUrl:
-          res.imageUrl ||
-          `https://picsum.photos/seed/${encodeURIComponent(artPrompt)}/1200/675`,
+        imageUrl: res.imageUrl,
         caption: `Scene plate for ${activeChapter?.title}`,
         placement: artPlacement,
+        sourceType: "ai_generated",
         createdAt: new Date().toISOString(),
       };
 
@@ -549,10 +560,122 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
       setAiNotification("Art plate bound to chapter!");
       setTimeout(() => setAiNotification(null), 4000);
     } catch (err: any) {
-      alert("Art generation failed: " + err.message);
+      setAiNotification(err?.message || "Art generation failed. Check that a billing-enabled Gemini API key is active.");
+      setTimeout(() => setAiNotification(null), 8000);
     } finally {
       setIsGeneratingArt(false);
     }
+  };
+
+  // Upload Illustration File(s) directly to active chapter
+  const handleUploadChapterIllustrationFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !activeChapter) return;
+    const fileArray = Array.from(files);
+    e.target.value = "";
+
+    setIsUploadingChapterArt(true);
+    try {
+      const added: ChapterIllustration[] = [];
+      for (let i = 0; i < fileArray.length; i++) {
+        const processed = await processUploadedImageFile(fileArray[i]);
+        added.push({
+          id: `ill-ch-up-${Date.now()}-${i}`,
+          title: processed.cleanTitle,
+          prompt: `Uploaded artwork (${processed.fileName})`,
+          style: "uploaded_artwork",
+          aspectRatio: processed.aspectRatio,
+          imageUrl: processed.dataUrl,
+          caption: processed.cleanTitle,
+          placement: "header",
+          plateType: "illustration",
+          sourceType: "uploaded_file",
+          fileName: processed.fileName,
+          fileSizeBytes: processed.fileSizeBytes,
+          mimeType: processed.mimeType,
+          width: processed.width,
+          height: processed.height,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      const updatedChapters = book.chapters.map((ch) =>
+        ch.id === activeChapter.id
+          ? { ...ch, illustrations: [...(ch.illustrations || []), ...added] }
+          : ch
+      );
+
+      onUpdateBook({
+        ...book,
+        chapters: updatedChapters,
+        updatedAt: new Date().toISOString(),
+      });
+      setAiNotification(
+        `Uploaded ${added.length} illustration${added.length > 1 ? "s" : ""} to Chapter ${activeChapter.number}!`
+      );
+      setTimeout(() => setAiNotification(null), 4000);
+    } catch (err: any) {
+      setAiNotification(err?.message || "Failed to upload illustration.");
+      setTimeout(() => setAiNotification(null), 6000);
+    } finally {
+      setIsUploadingChapterArt(false);
+    }
+  };
+
+  const handleDeleteChapterIllustration = (illId: string) => {
+    if (!activeChapter) return;
+    const updatedChapters = book.chapters.map((ch) =>
+      ch.id === activeChapter.id
+        ? { ...ch, illustrations: (ch.illustrations || []).filter((i) => i.id !== illId) }
+        : ch
+    );
+    onUpdateBook({
+      ...book,
+      chapters: updatedChapters,
+      updatedAt: new Date().toISOString(),
+    });
+    setAiNotification("Illustration removed from chapter.");
+    setTimeout(() => setAiNotification(null), 3000);
+  };
+
+  const handleUpdateChapterIllustrationPlacement = (
+    illId: string,
+    placement: ChapterIllustration["placement"]
+  ) => {
+    if (!activeChapter) return;
+    const updatedChapters = book.chapters.map((ch) =>
+      ch.id === activeChapter.id
+        ? {
+            ...ch,
+            illustrations: (ch.illustrations || []).map((i) =>
+              i.id === illId ? { ...i, placement } : i
+            ),
+          }
+        : ch
+    );
+    onUpdateBook({
+      ...book,
+      chapters: updatedChapters,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const handleAttachVaultIllustrationToChapter = (vaultIll: ChapterIllustration) => {
+    if (!activeChapter) return;
+    const updatedVault = (book.mediaLibrary || []).filter((i) => i.id !== vaultIll.id);
+    const updatedChapters = book.chapters.map((ch) =>
+      ch.id === activeChapter.id
+        ? { ...ch, illustrations: [...(ch.illustrations || []), vaultIll] }
+        : ch
+    );
+    onUpdateBook({
+      ...book,
+      mediaLibrary: updatedVault,
+      chapters: updatedChapters,
+      updatedAt: new Date().toISOString(),
+    });
+    setAiNotification(`Attached "${vaultIll.title}" to Chapter ${activeChapter.number}!`);
+    setTimeout(() => setAiNotification(null), 3500);
   };
 
   if (!activeChapter) {
@@ -1247,15 +1370,50 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
               </div>
             )}
 
-            {/* Tab 4: Chapter Visual Plates */}
+            {/* Tab 4: Chapter Visual Plates & Media Controls */}
             {sideDrawerTab === "art" && (
               <div className="space-y-3">
+                <input
+                  ref={chapterArtUploadRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                  multiple
+                  onChange={handleUploadChapterIllustrationFiles}
+                  className="hidden"
+                />
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => chapterArtUploadRef.current?.click()}
+                    disabled={isUploadingChapterArt}
+                    className="py-2 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors disabled:opacity-50"
+                  >
+                    {isUploadingChapterArt ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5" />
+                    )}
+                    <span>Upload File</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowArtGenerator(true)}
+                    className="py-2 px-2.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>AI Generate</span>
+                  </button>
+                </div>
+
                 <button
-                  onClick={() => setShowArtGenerator(true)}
-                  className="w-full py-2 px-3 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-xs font-medium flex items-center justify-center space-x-2"
+                  type="button"
+                  onClick={() => onNavigateToTab("art")}
+                  className="w-full py-1.5 px-3 rounded-xl bg-stone-950 hover:bg-stone-800 border border-stone-800 text-stone-300 text-[11px] font-medium flex items-center justify-between transition-colors"
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Generate New Scene Illustration</span>
+                  <span>Open Full Illustration & Media Manager</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-amber-400" />
                 </button>
 
                 {activeChapter.illustrations && activeChapter.illustrations.length > 0 ? (
@@ -1264,24 +1422,88 @@ export const ManuscriptEditor: React.FC<ManuscriptEditorProps> = ({
                       key={ill.id}
                       className="rounded-xl overflow-hidden border border-stone-800 bg-stone-950"
                     >
-                      <img
-                        src={ill.imageUrl}
-                        alt={ill.title}
-                        className="w-full h-32 object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="p-2.5 space-y-1">
-                        <div className="font-bold text-stone-200">{ill.title}</div>
-                        <div className="text-[10px] text-stone-400 line-clamp-2">{ill.prompt}</div>
-                        <div className="text-[9px] font-mono text-purple-400 uppercase">
-                          Placement: {ill.placement}
+                      <div className="relative">
+                        <img
+                          src={ill.imageUrl}
+                          alt={ill.title}
+                          className="w-full h-32 object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteChapterIllustration(ill.id)}
+                          className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/75 hover:bg-rose-600 text-stone-200 hover:text-white transition-colors"
+                          title="Delete illustration from chapter"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="p-2.5 space-y-1.5">
+                        <div className="font-bold text-stone-200 text-xs truncate">{ill.title}</div>
+                        <div className="text-[10px] text-stone-400 line-clamp-2">
+                          {ill.caption || ill.prompt}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-800/80">
+                          <span className="text-[9px] font-mono text-stone-500 uppercase">
+                            Placement:
+                          </span>
+                          <select
+                            value={ill.placement}
+                            onChange={(e) =>
+                              handleUpdateChapterIllustrationPlacement(
+                                ill.id,
+                                e.target.value as ChapterIllustration["placement"]
+                              )
+                            }
+                            className="rounded bg-stone-900 border border-stone-800 text-purple-300 text-[10px] font-mono px-1.5 py-0.5 focus:outline-none"
+                          >
+                            <option value="header">Header</option>
+                            <option value="inline">Inline</option>
+                            <option value="fullpage">Full Page</option>
+                            <option value="tail">Tail</option>
+                          </select>
                         </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="text-center py-8 text-stone-500">
+                  <div className="text-center py-6 text-stone-500 text-xs border border-dashed border-stone-800 rounded-xl">
                     No visual plates attached to this chapter yet.
+                  </div>
+                )}
+
+                {/* Quick Attach from Unassigned Media Vault */}
+                {book.mediaLibrary && book.mediaLibrary.length > 0 && (
+                  <div className="pt-2 border-t border-stone-800 space-y-2">
+                    <div className="flex items-center space-x-1.5 text-[10px] font-mono uppercase text-sky-400 font-bold">
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      <span>Media Vault ({book.mediaLibrary.length} Unassigned)</span>
+                    </div>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {book.mediaLibrary.map((vIll) => (
+                        <div
+                          key={vIll.id}
+                          className="flex items-center justify-between gap-2 p-2 rounded-xl bg-stone-950 border border-stone-800"
+                        >
+                          <div className="flex items-center space-x-2 min-w-0">
+                            <img
+                              src={vIll.imageUrl}
+                              alt={vIll.title}
+                              className="w-9 h-9 rounded object-cover shrink-0"
+                              referrerPolicy="no-referrer"
+                            />
+                            <span className="text-[11px] text-stone-200 truncate">{vIll.title}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleAttachVaultIllustrationToChapter(vIll)}
+                            className="px-2 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 border border-sky-500/40 text-sky-300 text-[10px] font-bold shrink-0"
+                          >
+                            + Attach
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
