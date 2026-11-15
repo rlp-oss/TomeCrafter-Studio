@@ -518,7 +518,7 @@ Populate applyableData fields specifically when relevant to the task:
 - If applyActionType is "update_blurb": fill salesBlurbHook, salesBlurbBody, salesBlurbCta, marketingHook, and launchStrategy.
 - If applyActionType is "update_keywords": fill keywords (7 search phrases) and bisacCategories (2-3 standard BISAC paths).
 - If applyActionType is "update_formatting": fill trimSize ("6x9"|"5.5x8.5"|"8x10"|"pocket"), fontPreset ("garamond"|"baskerville"|"caslon"|"merriweather"|"cinzel"|"courier"|"inter"), dropCaps (boolean), and sceneBreakSymbol.
-- If applyActionType is "save_chapter_notes": fill chapterNotes with crisp actionable production notes or art/proofing notes for that chapter (and coverPrompt if an art brief).
+- If applyActionType is "save_chapter_notes" or structural/manuscript audit: fill chapterNotes with crisp actionable production notes (and coverPrompt if an art brief, plus publisherImprint/authorBio if metadata updates are recommended).
 - If applyActionType is "append_chapter_scene": fill chapterProseAddition with publication-ready scene prose matching the book's voice.`;
 
     const response = await generateContentWithRetry({
@@ -559,6 +559,8 @@ Populate applyableData fields specifically when relevant to the task:
                 fontPreset: { type: Type.STRING },
                 dropCaps: { type: Type.BOOLEAN },
                 sceneBreakSymbol: { type: Type.STRING },
+                publisherImprint: { type: Type.STRING },
+                authorBio: { type: Type.STRING },
                 coverPrompt: { type: Type.STRING },
                 chapterNotes: { type: Type.STRING },
                 chapterProseAddition: { type: Type.STRING },

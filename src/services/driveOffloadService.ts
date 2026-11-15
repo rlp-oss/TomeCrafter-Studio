@@ -3,6 +3,8 @@ import {
   setDoc,
   updateDoc,
   getDoc,
+  deleteDoc,
+  deleteField,
   serverTimestamp,
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "./firebase";
@@ -24,6 +26,7 @@ import {
   validateFirestoreDocumentSize,
   calculateByteSize,
   formatBytes,
+  sanitizeSafeImageRef,
   FIRESTORE_MAX_DOCUMENT_BYTES,
   FIRESTORE_SAFE_THRESHOLD_BYTES,
 } from "./dataCompression";
@@ -71,6 +74,42 @@ export function sanitizeBookId(id: string): string {
   return cleaned.length > 0 ? cleaned : `book-${Date.now()}`;
 }
 
+const ALLOWED_FIRESTORE_BOOK_KEYS = new Set([
+  "id",
+  "userId",
+  "title",
+  "subtitle",
+  "author",
+  "genre",
+  "tone",
+  "targetWordCount",
+  "currentWordCount",
+  "dailyWordCountGoal",
+  "wordGoalMode",
+  "dailyWordBaselineCount",
+  "dailyWordBaselineDate",
+  "premise",
+  "targetAudience",
+  "coverImageUrl",
+  "coverImage",
+  "frontCoverImage",
+  "coverTitleFont",
+  "coverAccentColor",
+  "chapters",
+  "mediaLibrary",
+  "loreEntries",
+  "publishingKit",
+  "formattingSettings",
+  "originalityReport",
+  "isOffloadedToDrive",
+  "offloadMetadata",
+  "chapterOutlines",
+  "loreSummaries",
+  "_stubVersion",
+  "createdAt",
+  "updatedAt",
+]);
+
 /**
  * Strips undefined/null values and enforces blueprint-compliant create vs update writes
  * with Firestore serverTimestamp() for createdAt/updatedAt temporal integrity.
@@ -84,24 +123,24 @@ async function persistBookRecord(
   const path = `books/${safeId}`;
   const docRef = doc(db, "books", safeId);
 
-  // Strip createdAt/updatedAt from incoming fields so serverTimestamp() is authoritative
-  const cleanFields: Record<string, any> = {};
+  // Strip createdAt/updatedAt/id/userId from incoming mutable fields
+  const mutableFields: Record<string, any> = {};
   for (const [k, v] of Object.entries(fields)) {
-    if (k === "createdAt" || k === "updatedAt") continue;
+    if (k === "createdAt" || k === "updatedAt" || k === "id" || k === "userId") continue;
     if (v !== undefined) {
-      cleanFields[k] = v;
+      mutableFields[k] = v;
     }
   }
-  cleanFields.id = safeId;
-  cleanFields.userId = userId;
 
   let existsInCloud = knownCloudBookIds.has(safeId);
+  let existingData: Record<string, any> | null = null;
   if (!existsInCloud) {
     try {
       const snap = await getDoc(docRef);
       existsInCloud = snap.exists();
       if (existsInCloud) {
         knownCloudBookIds.add(safeId);
+        existingData = snap.data() as Record<string, any>;
       }
     } catch (err) {
       // If getDoc fails due to not-found or permissions on non-existent doc, check safely
@@ -116,7 +155,9 @@ async function persistBookRecord(
   if (!existsInCloud) {
     try {
       await setDoc(docRef, {
-        ...cleanFields,
+        ...mutableFields,
+        id: safeId,
+        userId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -125,12 +166,105 @@ async function persistBookRecord(
       handleFirestoreError(err, OperationType.CREATE, path);
     }
   } else {
-    try {
-      await updateDoc(docRef, {
-        ...cleanFields,
+    const buildUpdatePayload = (docData: Record<string, any> | null): Record<string, any> => {
+      const payload: Record<string, any> = {
+        ...mutableFields,
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (docData) {
+        if (!docData.id) {
+          payload.id = safeId;
+        }
+        if (!docData.createdAt || typeof docData.createdAt?.toDate !== "function") {
+          payload.createdAt = serverTimestamp();
+        }
+        if ("coverImage" in docData && !("coverImage" in mutableFields)) {
+          payload.coverImage = deleteField();
+        }
+        if ("frontCoverImage" in docData && !("frontCoverImage" in mutableFields)) {
+          payload.frontCoverImage = deleteField();
+        }
+        if (mutableFields.isOffloadedToDrive === false) {
+          if ("chapterOutlines" in docData) payload.chapterOutlines = deleteField();
+          if ("loreSummaries" in docData) payload.loreSummaries = deleteField();
+          if ("_stubVersion" in docData) payload._stubVersion = deleteField();
+        }
+        if ("dailyWordCountGoal" in docData && !("dailyWordCountGoal" in mutableFields)) {
+          payload.dailyWordCountGoal = deleteField();
+        }
+        if ("wordGoalMode" in docData && !("wordGoalMode" in mutableFields)) {
+          payload.wordGoalMode = deleteField();
+        }
+        if ("dailyWordBaselineCount" in docData && !("dailyWordBaselineCount" in mutableFields)) {
+          payload.dailyWordBaselineCount = deleteField();
+        }
+        if ("dailyWordBaselineDate" in docData && !("dailyWordBaselineDate" in mutableFields)) {
+          payload.dailyWordBaselineDate = deleteField();
+        }
+      }
+      return payload;
+    };
+
+    try {
+      await updateDoc(docRef, buildUpdatePayload(existingData));
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("Missing or insufficient permissions")) {
+        try {
+          const freshSnap = await getDoc(docRef);
+          if (freshSnap.exists()) {
+            const freshData = freshSnap.data() as Record<string, any>;
+            const hasUnknownLegacyKeys = Object.keys(freshData).some(
+              (k) => !ALLOWED_FIRESTORE_BOOK_KEYS.has(k)
+            );
+            const hasMismatchedId = Boolean(freshData.id && freshData.id !== safeId);
+            const hasLegacyFields =
+              !freshData.id ||
+              !freshData.createdAt ||
+              typeof freshData.createdAt?.toDate !== "function" ||
+              "coverImage" in freshData ||
+              "frontCoverImage" in freshData ||
+              (mutableFields.isOffloadedToDrive === false &&
+                ("chapterOutlines" in freshData ||
+                  "loreSummaries" in freshData ||
+                  "_stubVersion" in freshData)) ||
+              ("dailyWordCountGoal" in freshData &&
+                (typeof freshData.dailyWordCountGoal !== "number" ||
+                  freshData.dailyWordCountGoal < 1 ||
+                  freshData.dailyWordCountGoal > 1000000)) ||
+              ("wordGoalMode" in freshData &&
+                freshData.wordGoalMode !== "project" &&
+                freshData.wordGoalMode !== "daily");
+
+            if (hasLegacyFields && !hasUnknownLegacyKeys && !hasMismatchedId) {
+              try {
+                await updateDoc(docRef, buildUpdatePayload(freshData));
+                return;
+              } catch {
+                // Fall through to legacy document replacement if existing fields violate schema
+              }
+            }
+
+            if (
+              (hasUnknownLegacyKeys || hasMismatchedId || hasLegacyFields) &&
+              (!freshData.userId || freshData.userId === userId)
+            ) {
+              await deleteDoc(docRef);
+              await setDoc(docRef, {
+                ...mutableFields,
+                id: safeId,
+                userId,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              });
+              knownCloudBookIds.add(safeId);
+              return;
+            }
+          }
+        } catch (recoveryErr) {
+          handleFirestoreError(recoveryErr, OperationType.UPDATE, path);
+        }
+      }
       handleFirestoreError(err, OperationType.UPDATE, path);
     }
   }
@@ -207,21 +341,25 @@ export function createFirestoreMetadataStub(
     tagline: lore.tagline || "",
   }));
 
+  const rawDriveLink = (driveFileInfo.webViewLink || "").trim().slice(0, 1024);
+  const safeDriveLink = /^https?:\/\/.+/.test(rawDriveLink) ? rawDriveLink : undefined;
+
   const offloadMetadata: OffloadMetadata = {
-    driveFileId: driveFileInfo.fileId,
-    driveWebViewLink: driveFileInfo.webViewLink,
-    driveFileName: driveFileInfo.name,
+    driveFileId: String(driveFileInfo.fileId || "drive-file").slice(0, 256),
+    ...(safeDriveLink ? { driveWebViewLink: safeDriveLink } : {}),
+    driveFileName: String(driveFileInfo.name || "archive.json").slice(0, 256),
     offloadedAt: new Date().toISOString(),
-    originalSizeBytes,
-    originalSizeFormatted: formatBytes(originalSizeBytes),
-    compressedSizeBytes,
-    compressedSizeFormatted: formatBytes(compressedSizeBytes),
-    chapterCount: book.chapters?.length || 0,
-    loreCount: book.loreEntries?.length || 0,
+    originalSizeBytes: Math.max(0, Math.min(1000000000, Math.round(originalSizeBytes || 0))),
+    originalSizeFormatted: formatBytes(originalSizeBytes).slice(0, 40),
+    compressedSizeBytes: Math.max(0, Math.min(1000000000, Math.round(compressedSizeBytes || 0))),
+    compressedSizeFormatted: formatBytes(compressedSizeBytes).slice(0, 40),
+    chapterCount: Math.max(0, Math.min(1000, book.chapters?.length || 0)),
+    loreCount: Math.max(0, Math.min(2000, book.loreEntries?.length || 0)),
     reason: "Document payload exceeded 1MB Firestore limit. Full lossless manuscript archived in Google Drive.",
   };
 
   const totalWords = chapterOutlines.reduce((sum, ch) => sum + ch.wordCount, 0);
+  const safeStubCoverUrl = sanitizeSafeImageRef(book.coverImageUrl, 500000);
 
   return {
     id: sanitizeBookId(book.id),
@@ -250,7 +388,7 @@ export function createFirestoreMetadataStub(
     premise: (book.premise || "").slice(0, 8000),
     tone: (book.tone || "Atmospheric and Evocative").slice(0, 240),
     targetAudience: (book.targetAudience || "Adult & Literary Fiction").slice(0, 200),
-    coverImageUrl: book.coverImageUrl && book.coverImageUrl.length <= 500000 ? book.coverImageUrl : undefined,
+    coverImageUrl: safeStubCoverUrl !== undefined ? safeStubCoverUrl : undefined,
     coverTitleFont: book.coverTitleFont ? book.coverTitleFont.slice(0, 80) : undefined,
     coverAccentColor: book.coverAccentColor ? book.coverAccentColor.slice(0, 40) : undefined,
     isOffloadedToDrive: true,

@@ -405,11 +405,18 @@ service cloud.firestore {
         && isValidBook(incoming(), bookId);
       allow update: if isVerifiedUser()
         && isValidId(bookId)
-        && incoming().id == existing().id
+        && (
+          ('id' in existing() && incoming().id == existing().id)
+          || (!('id' in existing()) && incoming().id == bookId)
+        )
         && incoming().userId == existing().userId
-        && incoming().createdAt == existing().createdAt
+        && (
+          ('createdAt' in existing() && existing().createdAt is timestamp && incoming().createdAt == existing().createdAt)
+          || ((!('createdAt' in existing()) || !(existing().createdAt is timestamp)) && incoming().createdAt == request.time)
+        )
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
+          'id', 'createdAt',
           'title', 'subtitle', 'author', 'genre', 'tone',
           'targetWordCount', 'currentWordCount', 'dailyWordCountGoal', 'wordGoalMode', 'dailyWordBaselineCount', 'dailyWordBaselineDate',
           'premise', 'targetAudience',

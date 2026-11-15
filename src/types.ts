@@ -1207,6 +1207,9 @@ export interface StudioApplyableData {
   fontPreset?: FormattingSettings["fontPreset"];
   dropCaps?: boolean;
   sceneBreakSymbol?: string;
+  publisherImprint?: string;
+  authorBio?: string;
+  genre?: Genre;
   coverPrompt?: string;
   chapterNotes?: string;
   chapterProseAddition?: string;

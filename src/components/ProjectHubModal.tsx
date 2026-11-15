@@ -19,6 +19,9 @@ import {
   Palette,
   Compass,
   Download,
+  Pencil,
+  ArrowLeft,
+  Save,
 } from "lucide-react";
 import { Book, Genre } from "../types";
 import { apiService } from "../services/api";
@@ -30,9 +33,23 @@ interface ProjectHubModalProps {
   activeBookId: string;
   onSelectBook: (bookId: string) => void;
   onCreateBook: (newBookData: Partial<Book>) => void;
+  onEditBook?: (
+    bookId: string,
+    updates: {
+      title: string;
+      subtitle: string;
+      author: string;
+      genre: Genre;
+      tone: string;
+      targetWordCount: number;
+      premise: string;
+      syncPublishingKit?: boolean;
+    }
+  ) => Promise<void> | void;
   onDuplicateBook?: (bookId: string) => void;
   onDeleteBook?: (bookId: string) => void;
   initialTab?: "create" | "library";
+  initialEditBookId?: string | null;
   authorDefaultName?: string;
 }
 
@@ -78,9 +95,11 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   activeBookId,
   onSelectBook,
   onCreateBook,
+  onEditBook,
   onDuplicateBook,
   onDeleteBook,
   initialTab = "create",
+  initialEditBookId = null,
   authorDefaultName = "Anonymous Author",
 }) => {
   const [activeTab, setActiveTab] = useState<"create" | "library">(initialTab);
@@ -96,10 +115,49 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   const [isExpandingPremise, setIsExpandingPremise] = useState(false);
   const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null);
 
+  // Edit Project State
+  const [editingBookId, setEditingBookId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSubtitle, setEditSubtitle] = useState("");
+  const [editAuthor, setEditAuthor] = useState("");
+  const [editGenre, setEditGenre] = useState<Genre>("Epic Fantasy");
+  const [editTone, setEditTone] = useState("");
+  const [editTargetWordCount, setEditTargetWordCount] = useState<number>(60000);
+  const [editPremise, setEditPremise] = useState("");
+  const [syncPublishingKit, setSyncPublishingKit] = useState<boolean>(true);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isExpandingEditPremise, setIsExpandingEditPremise] = useState(false);
+
   // Library Search / Filter
   const [searchQuery, setSearchQuery] = useState("");
   const [genreFilter, setGenreFilter] = useState<string>("all");
   const [copiedRefId, setCopiedRefId] = useState<string | null>(null);
+
+  const startEditingBook = (bookToEdit: Book) => {
+    setEditingBookId(bookToEdit.id);
+    setEditTitle(bookToEdit.title || "");
+    setEditSubtitle(bookToEdit.subtitle || "");
+    setEditAuthor(bookToEdit.author || authorDefaultName);
+    setEditGenre((bookToEdit.genre as Genre) || "Epic Fantasy");
+    setEditTone(bookToEdit.tone || "");
+    setEditTargetWordCount(bookToEdit.targetWordCount || 60000);
+    setEditPremise(bookToEdit.premise || "");
+    setSyncPublishingKit(true);
+    setActiveTab("library");
+  };
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    if (initialEditBookId) {
+      const target = books.find((b) => b.id === initialEditBookId);
+      if (target) {
+        startEditingBook(target);
+        return;
+      }
+    }
+    setEditingBookId(null);
+    setActiveTab(initialTab);
+  }, [isOpen, initialTab, initialEditBookId]);
 
   if (!isOpen) return null;
 
@@ -144,6 +202,44 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     });
 
     onClose();
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBookId || !editTitle.trim() || !onEditBook) return;
+    setIsSavingEdit(true);
+    try {
+      await onEditBook(editingBookId, {
+        title: editTitle.trim(),
+        subtitle: editSubtitle.trim(),
+        author: editAuthor.trim() || authorDefaultName,
+        genre: editGenre,
+        tone: editTone.trim(),
+        targetWordCount: editTargetWordCount,
+        premise: editPremise.trim(),
+        syncPublishingKit,
+      });
+      setEditingBookId(null);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleAiExpandEditPremise = async () => {
+    if (!editTitle.trim()) return;
+    setIsExpandingEditPremise(true);
+    try {
+      const generated = await apiService.generateText({
+        prompt: `You are the Master Realm Architect. Generate a compelling 2-paragraph premise and logline for a ${editGenre} book titled "${editTitle}". Tone: ${editTone}. Target length: ${editTargetWordCount} words.`,
+      });
+      if (generated && generated.trim()) {
+        setEditPremise(generated.trim());
+      }
+    } catch (err) {
+      console.error("Failed to generate premise:", err);
+    } finally {
+      setIsExpandingEditPremise(false);
+    }
   };
 
   const handleCopyRefId = (id: string) => {
@@ -206,7 +302,10 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
         {/* Tab Switcher */}
         <div className="flex items-center border-b border-stone-800 px-6 bg-stone-900/90 gap-4">
           <button
-            onClick={() => setActiveTab("create")}
+            onClick={() => {
+              setEditingBookId(null);
+              setActiveTab("create");
+            }}
             className={`flex items-center space-x-2 py-3.5 border-b-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
               activeTab === "create"
                 ? "border-amber-400 text-amber-400"
@@ -218,7 +317,10 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab("library")}
+            onClick={() => {
+              setEditingBookId(null);
+              setActiveTab("library");
+            }}
             className={`flex items-center space-x-2 py-3.5 border-b-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
               activeTab === "library"
                 ? "border-amber-400 text-amber-400"
@@ -425,6 +527,202 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                 </div>
               </div>
             </form>
+          ) : editingBookId ? (
+            /* Edit Existing Project View */
+            <form onSubmit={handleEditSubmit} className="space-y-5">
+              <div className="flex items-center justify-between bg-stone-950/80 border border-amber-500/30 rounded-2xl px-4 py-3">
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditingBookId(null)}
+                    className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 transition-colors"
+                    title="Back to project list"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-amber-400">
+                      Editing Project Metadata
+                    </div>
+                    <h3 className="font-serif font-bold text-base text-stone-100">
+                      {editTitle || "Untitled Project"}
+                    </h3>
+                  </div>
+                </div>
+                <span className="text-[11px] font-mono text-stone-500">
+                  ID: {editingBookId}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-stone-300 text-xs font-semibold mb-1">
+                    Book Project Title *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Enter book title..."
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-stone-300 text-xs font-semibold mb-1">
+                    Subtitle / Series Tag
+                  </label>
+                  <input
+                    type="text"
+                    value={editSubtitle}
+                    onChange={(e) => setEditSubtitle(e.target.value)}
+                    placeholder="Optional subtitle..."
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-stone-300 text-xs font-semibold mb-1">
+                    Author / Pen Name
+                  </label>
+                  <input
+                    type="text"
+                    value={editAuthor}
+                    onChange={(e) => setEditAuthor(e.target.value)}
+                    placeholder="Author name..."
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-stone-300 text-xs font-semibold mb-1">
+                    Primary Genre
+                  </label>
+                  <select
+                    value={editGenre}
+                    onChange={(e) => setEditGenre(e.target.value as Genre)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                  >
+                    {GENRE_PRESETS.map((g) => (
+                      <option key={g.genre} value={g.genre}>
+                        {g.icon} {g.genre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-stone-300 text-xs font-semibold">
+                      Target Word Count
+                    </label>
+                    <span className="text-xs font-mono text-amber-400 font-bold">
+                      {editTargetWordCount.toLocaleString()} words
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1000}
+                      max={10000000}
+                      step={500}
+                      value={editTargetWordCount}
+                      onChange={(e) => setEditTargetWordCount(Math.max(1000, Number(e.target.value) || 1000))}
+                      className="w-32 px-3 py-2 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 text-xs font-mono focus:outline-none focus:border-amber-500"
+                    />
+                    <div className="grid grid-cols-4 gap-1 flex-1">
+                      {[
+                        { label: "30k", count: 30000 },
+                        { label: "50k", count: 50000 },
+                        { label: "80k", count: 80000 },
+                        { label: "100k", count: 100000 },
+                      ].map((preset) => (
+                        <button
+                          type="button"
+                          key={preset.count}
+                          onClick={() => setEditTargetWordCount(preset.count)}
+                          className={`py-2 rounded-lg text-[11px] font-mono border transition-all ${
+                            editTargetWordCount === preset.count
+                              ? "bg-amber-500/20 text-amber-300 border-amber-500/50 font-bold"
+                              : "bg-stone-950 border-stone-800 text-stone-400 hover:text-stone-200"
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-stone-300 text-xs font-semibold mb-1">
+                    Tone & Narrative Style
+                  </label>
+                  <input
+                    type="text"
+                    value={editTone}
+                    onChange={(e) => setEditTone(e.target.value)}
+                    placeholder="e.g. authoritative, grounded, analytical"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-stone-300 text-xs font-semibold">
+                    Core Premise, Logline & Hook
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAiExpandEditPremise}
+                    disabled={!editTitle.trim() || isExpandingEditPremise}
+                    className="flex items-center space-x-1.5 text-xs text-amber-400 hover:text-amber-300 disabled:opacity-40 transition-colors"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    <span>{isExpandingEditPremise ? "Expanding Premise..." : "AI Refine Premise"}</span>
+                  </button>
+                </div>
+                <textarea
+                  value={editPremise}
+                  onChange={(e) => setEditPremise(e.target.value)}
+                  rows={3}
+                  placeholder="Describe the central thesis, stakes, or premise..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <label className="flex items-center space-x-2.5 text-xs text-stone-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={syncPublishingKit}
+                  onChange={(e) => setSyncPublishingKit(e.target.checked)}
+                  className="rounded border-stone-600 bg-stone-950 text-amber-500 focus:ring-amber-500"
+                />
+                <span>Also sync Publishing Kit Commercial Title & Subtitle with these changes</span>
+              </label>
+
+              <div className="pt-4 border-t border-stone-800 flex items-center justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingBookId(null)}
+                  className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!editTitle.trim() || isSavingEdit}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-xs shadow-lg shadow-amber-950/40 disabled:opacity-40 transition-all flex items-center space-x-2"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{isSavingEdit ? "Saving..." : "Save Project Changes"}</span>
+                </button>
+              </div>
+            </form>
           ) : (
             /* Project Reference Library View */
             <div className="space-y-4">
@@ -560,7 +858,18 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                           </div>
 
                           {/* Right: Actions */}
-                          <div className="flex items-center space-x-2 shrink-0">
+                          <div className="flex items-center space-x-2 shrink-0 flex-wrap gap-y-2">
+                            {onEditBook && (
+                              <button
+                                onClick={() => startEditingBook(b)}
+                                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-stone-800 hover:bg-amber-500/20 text-stone-200 hover:text-amber-300 border border-stone-700 hover:border-amber-500/40 text-xs font-medium transition-colors"
+                                title={`Edit "${b.title}"`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>Edit Project</span>
+                              </button>
+                            )}
+
                             {onDuplicateBook && (
                               <button
                                 onClick={() => onDuplicateBook(b.id)}

@@ -107,12 +107,8 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed.map((b: any) => {
-            let title = b.title;
-            let subtitle = b.subtitle;
-            if (b.id === "human-initiative" || (title && title.includes("H.U.M.A.N."))) {
-              title = "The Sovereign Author";
-              subtitle = "A Manifesto for the Creative Renaissance";
-            }
+            const title = b.title;
+            const subtitle = b.subtitle;
             return {
               ...b,
               title,
@@ -121,29 +117,37 @@ export default function App() {
               mediaLibrary: Array.isArray(b.mediaLibrary) ? b.mediaLibrary : [],
               loreEntries: Array.isArray(b.loreEntries) ? b.loreEntries : [],
               originalityReport: b.originalityReport
-                ? {
-                    ...b.originalityReport,
-                    humanSocietyFundActive: false,
-                    showHumanLogoOnBackCover: false,
-                    taggedAuthors: Array.isArray(b.originalityReport?.taggedAuthors)
-                      ? b.originalityReport.taggedAuthors
-                      : [],
-                    recentTransactions: Array.isArray(b.originalityReport?.recentTransactions)
-                      ? b.originalityReport.recentTransactions
-                      : [],
-                  }
+                ? (() => {
+                    const {
+                      humanSocietyFundActive: _hsf,
+                      showHumanLogoOnBackCover: _hlb,
+                      ...cleanReport
+                    } = b.originalityReport;
+                    return {
+                      ...cleanReport,
+                      taggedAuthors: Array.isArray(cleanReport?.taggedAuthors)
+                        ? cleanReport.taggedAuthors
+                        : [],
+                      recentTransactions: Array.isArray(cleanReport?.recentTransactions)
+                        ? cleanReport.recentTransactions
+                        : [],
+                    };
+                  })()
                 : undefined,
               formattingSettings: b.formattingSettings
-                ? {
-                    ...b.formattingSettings,
-                    showHumanLogoOnBackCover: false,
-                    humanFundPledgeActive: false,
-                  }
+                ? (() => {
+                    const {
+                      showHumanLogoOnBackCover: _fhl,
+                      humanFundPledgeActive: _hfp,
+                      ...cleanFormatting
+                    } = b.formattingSettings;
+                    return cleanFormatting;
+                  })()
                 : undefined,
               publishingKit: b.publishingKit
                 ? {
                     ...b.publishingKit,
-                    commercialTitle: title,
+                    commercialTitle: b.publishingKit.commercialTitle || title,
                     amazonKeywords: Array.isArray(b.publishingKit?.amazonKeywords)
                       ? b.publishingKit.amazonKeywords
                       : [],
@@ -178,6 +182,7 @@ export default function App() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [projectModalTab, setProjectModalTab] = useState<"create" | "library">("create");
+  const [projectEditBookId, setProjectEditBookId] = useState<string | null>(null);
   const [showGoogleDriveModal, setShowGoogleDriveModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [pendingDeleteBook, setPendingDeleteBook] = useState<Book | null>(null);
@@ -567,8 +572,110 @@ export default function App() {
 
   // Open Project Hub in specific mode
   const handleOpenProjectHub = (tab: "create" | "library" = "create") => {
+    setProjectEditBookId(null);
     setProjectModalTab(tab);
     setShowProjectModal(true);
+  };
+
+  const handleOpenEditProject = (bookId: string) => {
+    setProjectEditBookId(bookId);
+    setProjectModalTab("library");
+    setShowProjectModal(true);
+  };
+
+  const handleEditBook = async (
+    bookId: string,
+    updates: {
+      title: string;
+      subtitle: string;
+      author: string;
+      genre: Book["genre"];
+      tone: string;
+      targetWordCount: number;
+      premise: string;
+      syncPublishingKit?: boolean;
+    }
+  ) => {
+    const existing = booksRef.current.find((b) => b.id === bookId);
+    if (!existing) return;
+
+    const cleanTitle = updates.title.trim() || existing.title;
+    const cleanSubtitle = updates.subtitle.trim();
+    const cleanAuthor = updates.author.trim() || existing.author;
+    const cleanTone = updates.tone.trim();
+    const cleanPremise = updates.premise.trim();
+    const safeTargetWords = Math.max(1000, Math.min(10000000, Math.round(updates.targetWordCount || existing.targetWordCount || 60000)));
+    const nowIso = new Date().toISOString();
+
+    const updatedBook: Book = {
+      ...existing,
+      title: cleanTitle,
+      subtitle: cleanSubtitle,
+      author: cleanAuthor,
+      genre: updates.genre,
+      tone: cleanTone,
+      targetWordCount: safeTargetWords,
+      premise: cleanPremise,
+      publishingKit: existing.publishingKit
+        ? {
+            ...existing.publishingKit,
+            commercialTitle:
+              updates.syncPublishingKit !== false
+                ? cleanTitle
+                : existing.publishingKit.commercialTitle,
+            catchySubtitle:
+              updates.syncPublishingKit !== false
+                ? cleanSubtitle
+                : existing.publishingKit.catchySubtitle,
+          }
+        : existing.publishingKit,
+      updatedAt: nowIso,
+    };
+
+    const nextBooks = booksRef.current.map((b) => (b.id === bookId ? updatedBook : b));
+    booksRef.current = nextBooks;
+    setBooks(nextBooks);
+    dirtyBookIdsRef.current.add(bookId);
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextBooks));
+    } catch (e) {
+      console.error("Failed to save updated project to localStorage", e);
+    }
+
+    const formattedTime = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+    if (isAuthReady && currentUser) {
+      setSaveStatus("saving");
+      try {
+        await saveBookToFirestore(updatedBook, currentUser.uid);
+        dirtyBookIdsRef.current.delete(bookId);
+        setCloudSyncedIds((prev) => {
+          const next = new Set(prev);
+          next.add(bookId);
+          return next;
+        });
+        setLastSavedTime(formattedTime);
+        setSaveStatus("saved");
+        showTemporaryNotice(`Updated project "${cleanTitle}" and synced to cloud.`, "success");
+      } catch (err) {
+        console.error(`Failed syncing edited project "${cleanTitle}" (${bookId}):`, err);
+        setSaveStatus("error");
+        showTemporaryNotice(
+          `Project "${cleanTitle}" updated locally, but cloud sync failed: ${extractReadableSaveError(err)}`,
+          "error"
+        );
+      }
+      return;
+    }
+
+    setLastSavedTime(formattedTime);
+    setSaveStatus("saved");
+    showTemporaryNotice(`Updated project "${cleanTitle}".`, "success");
   };
 
   // Create New Book from Hub Modal
@@ -618,8 +725,8 @@ export default function App() {
         commercialTitle: title,
         catchySubtitle: newBookData.subtitle?.trim() || "",
         salesBlurb: {
-          hook: `In a world poised on the precipice of change, ${title} unfolds...`,
-          body: premise,
+          hook: `In a world poised on the precipice of change, ${title} unfolds...`.slice(0, 500),
+          body: premise.slice(0, 4000),
           callToAction: "Step into the journey.",
         },
         amazonKeywords: [genre, "Epic", "Sovereign Fiction", "Adventure"],
@@ -767,7 +874,10 @@ export default function App() {
         {/* Project Hub Modal on Landing Page */}
         <ProjectHubModal
           isOpen={showProjectModal}
-          onClose={() => setShowProjectModal(false)}
+          onClose={() => {
+            setShowProjectModal(false);
+            setProjectEditBookId(null);
+          }}
           books={books}
           activeBookId={activeBookId}
           onSelectBook={(bookId) => {
@@ -775,9 +885,11 @@ export default function App() {
             setShowLandingPage(false);
           }}
           onCreateBook={handleCreateBook}
+          onEditBook={handleEditBook}
           onDuplicateBook={handleDuplicateBook}
           onDeleteBook={handleDeleteBook}
           initialTab={projectModalTab}
+          initialEditBookId={projectEditBookId}
           authorDefaultName={currentUser?.displayName || "Anonymous Author"}
         />
 
@@ -810,6 +922,7 @@ export default function App() {
         onSelectTab={setActiveTab}
         onOpenNewBookModal={() => handleOpenProjectHub("create")}
         onOpenProjectHub={() => handleOpenProjectHub("library")}
+        onEditProject={handleOpenEditProject}
         onOpenExportModal={() => setShowExportModal(true)}
         onOpenGoogleDriveModal={() => setShowGoogleDriveModal(true)}
         onOpenLandingPage={() => setShowLandingPage(true)}
@@ -1040,14 +1153,19 @@ export default function App() {
       {/* Project Creation & Reference Hub Modal */}
       <ProjectHubModal
         isOpen={showProjectModal}
-        onClose={() => setShowProjectModal(false)}
+        onClose={() => {
+          setShowProjectModal(false);
+          setProjectEditBookId(null);
+        }}
         books={books}
         activeBookId={activeBookId}
         onSelectBook={handleSelectBook}
         onCreateBook={handleCreateBook}
+        onEditBook={handleEditBook}
         onDuplicateBook={handleDuplicateBook}
         onDeleteBook={handleDeleteBook}
         initialTab={projectModalTab}
+        initialEditBookId={projectEditBookId}
         authorDefaultName={currentUser?.displayName || "Anonymous Author"}
       />
 

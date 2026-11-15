@@ -245,6 +245,7 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
   const [isRunningTask, setIsRunningTask] = useState<boolean>(false);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [appliedNotice, setAppliedNotice] = useState<string | null>(null);
+  const [appliedDeliverableIds, setAppliedDeliverableIds] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const deliverablesStorageKey = `tomecrafter_studio_deliverables_${book.id}`;
@@ -472,9 +473,7 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
   };
 
   const handleApplyDeliverableToBook = (item: StudioDeliverableResult) => {
-    const data = item.applyableData;
-    if (!data) return;
-
+    const data = item.applyableData || {};
     const now = new Date().toISOString();
     let updatedBook: Book = { ...book, updatedAt: now };
     const appliedParts: string[] = [];
@@ -550,7 +549,7 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
         data.trimSize === "8x10" ||
         data.trimSize === "pocket"
           ? data.trimSize
-          : updatedBook.formattingSettings.trimSize;
+          : updatedBook.formattingSettings?.trimSize || "6x9";
       const validFont =
         data.fontPreset === "garamond" ||
         data.fontPreset === "baskerville" ||
@@ -560,7 +559,7 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
         data.fontPreset === "courier" ||
         data.fontPreset === "inter"
           ? data.fontPreset
-          : updatedBook.formattingSettings.fontPreset;
+          : updatedBook.formattingSettings?.fontPreset || "garamond";
 
       updatedBook = {
         ...updatedBook,
@@ -571,28 +570,98 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
           dropCaps:
             typeof data.dropCaps === "boolean"
               ? data.dropCaps
-              : updatedBook.formattingSettings.dropCaps,
+              : updatedBook.formattingSettings?.dropCaps ?? true,
           sceneBreakSymbol:
             data.sceneBreakSymbol ||
-            updatedBook.formattingSettings.sceneBreakSymbol,
+            updatedBook.formattingSettings?.sceneBreakSymbol ||
+            "* * *",
         },
       };
       appliedParts.push("Interior Formatting Specs");
     }
 
-    // 4. Update Target Chapter Notes or Append Scene Prose
-    const targetChapId = item.chapterId || selectedChapterId || book.chapters?.[0]?.id;
+    // 4. Apply Publisher Imprint & Author Bio (from structured data or deliverable text)
+    const markdownText = item.deliverableMarkdown || "";
+    const detectedImprint =
+      data.publisherImprint ||
+      (markdownText.includes("Rhythm Logic Publishing")
+        ? "Rhythm Logic Publishing • Red Deer, Alberta, Canada"
+        : undefined);
+    if (
+      detectedImprint &&
+      (!updatedBook.publishingKit?.publisherImprint ||
+        updatedBook.publishingKit.publisherImprint === "Aether & Iron Press" ||
+        Boolean(data.publisherImprint))
+    ) {
+      updatedBook = {
+        ...updatedBook,
+        publishingKit: {
+          ...updatedBook.publishingKit,
+          publisherImprint: detectedImprint,
+        },
+      };
+      appliedParts.push("Publisher Imprint");
+    }
+
+    const masterAuthorBio =
+      "C.W. (Cody) Germain is an independent software systems architect and founder based in Red Deer, Alberta, Canada, building cleanroom AI systems, C2PA provenance infrastructure, and equitable economic frameworks.";
+    const detectedBio =
+      data.authorBio ||
+      (markdownText.includes("independent software systems architect")
+        ? masterAuthorBio
+        : undefined);
+    if (
+      detectedBio &&
+      (!updatedBook.formattingSettings?.authorBio?.trim() ||
+        updatedBook.formattingSettings.authorBio.toLowerCase().includes("speculative fiction") ||
+        Boolean(data.authorBio))
+    ) {
+      updatedBook = {
+        ...updatedBook,
+        formattingSettings: {
+          ...updatedBook.formattingSettings,
+          authorBio: detectedBio,
+        },
+      };
+      appliedParts.push("Author Bio");
+    }
+
+    if (data.genre) {
+      updatedBook = {
+        ...updatedBook,
+        genre: data.genre,
+      };
+      appliedParts.push("Book Genre");
+    }
+
+    // 5. Update Target Chapter Notes or Append Scene Prose
+    const targetChapId = item.chapterId || selectedChapterId || updatedBook.chapters?.[0]?.id;
+    const fallbackNoteBody =
+      appliedParts.length === 0 && !data.chapterNotes && !data.coverPrompt && !data.chapterProseAddition
+        ? [
+            item.executiveSummary,
+            ...(item.checklist || []).map(
+              (c) => `• ${c.item}: ${c.actionNote}`
+            ),
+            markdownText ? `\n${markdownText.slice(0, 2400)}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "";
+
+    const effectiveChapterNotes = data.chapterNotes || fallbackNoteBody;
+
     if (
       targetChapId &&
-      (data.chapterNotes || data.coverPrompt || data.chapterProseAddition)
+      (effectiveChapterNotes || data.coverPrompt || data.chapterProseAddition)
     ) {
       updatedBook = {
         ...updatedBook,
         chapters: (updatedBook.chapters || []).map((ch) => {
           if (ch.id !== targetChapId) return ch;
           const noteAppend = [
-            data.chapterNotes
-              ? `[${item.staffName} — ${item.taskLabel}]\n${data.chapterNotes}`
+            effectiveChapterNotes
+              ? `[${item.staffName} — ${item.taskLabel}]\n${effectiveChapterNotes}`
               : "",
             data.coverPrompt ? `[Visual Prompt]\n${data.coverPrompt}` : "",
           ]
@@ -627,12 +696,13 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
       if (data.chapterProseAddition) {
         appliedParts.push("Chapter Scene Draft");
       } else {
-        appliedParts.push("Chapter Production Notes");
+        appliedParts.push("Production Notes");
       }
     }
 
     if (appliedParts.length > 0) {
       onUpdateBook(updatedBook);
+      setAppliedDeliverableIds((prev) => ({ ...prev, [item.id]: true }));
       setAppliedNotice(`Applied to "${book.title}": ${appliedParts.join(", ")}`);
     }
   };
@@ -733,20 +803,13 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
     setTimeout(() => setCopiedId(null), 1800);
   };
 
-  const hasApplyableFields = (d?: StudioDeliverableResult | null): boolean => {
-    if (!d?.applyableData) return false;
-    const a = d.applyableData;
+  const canApplyDeliverable = (d?: StudioDeliverableResult | null): boolean => {
+    if (!d) return false;
     return Boolean(
-      a.salesBlurbHook ||
-        a.salesBlurbBody ||
-        a.marketingHook ||
-        (Array.isArray(a.keywords) && a.keywords.length > 0) ||
-        (Array.isArray(a.bisacCategories) && a.bisacCategories.length > 0) ||
-        a.trimSize ||
-        a.fontPreset ||
-        a.chapterNotes ||
-        a.coverPrompt ||
-        a.chapterProseAddition
+      d.applyableData ||
+        d.deliverableMarkdown?.trim() ||
+        d.executiveSummary?.trim() ||
+        (d.checklist && d.checklist.length > 0)
     );
   };
 
@@ -1226,7 +1289,7 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
                       </div>
 
                       <div className="flex items-center space-x-2 shrink-0">
-                        {hasApplyableFields(latestDeliverable) && (
+                        {canApplyDeliverable(latestDeliverable) && (
                           <button
                             onClick={() =>
                               handleApplyDeliverableToBook(latestDeliverable)
@@ -1234,7 +1297,11 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
                             className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-semibold text-xs transition-colors flex items-center space-x-1.5"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Apply to Book</span>
+                            <span>
+                              {appliedDeliverableIds[latestDeliverable.id]
+                                ? "Changes Applied"
+                                : "Apply Changes"}
+                            </span>
                           </button>
                         )}
                         <button
@@ -1297,6 +1364,53 @@ export const PublishingStudioHQ: React.FC<PublishingStudioHQProps> = ({
                     <div className="p-4 rounded-lg bg-stone-950 border border-stone-800 text-sm text-stone-200 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
                       {latestDeliverable.deliverableMarkdown}
                     </div>
+
+                    {/* Action Bar After Manuscript / Deliverable Output */}
+                    {canApplyDeliverable(latestDeliverable) && (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                        <span className="text-xs text-stone-400">
+                          {appliedDeliverableIds[latestDeliverable.id]
+                            ? `Updates synced to "${book.title}". Remember to save or enable Auto-Save.`
+                            : `Apply these recommendations and notes directly to "${book.title}".`}
+                        </span>
+                        <div className="flex items-center space-x-2 shrink-0">
+                          <button
+                            onClick={() =>
+                              handleCopy(
+                                latestDeliverable.id,
+                                latestDeliverable.deliverableMarkdown
+                              )
+                            }
+                            className="px-3 py-2 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-medium transition-colors flex items-center space-x-1.5"
+                          >
+                            {copiedId === latestDeliverable.id ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>Copy Output</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleApplyDeliverableToBook(latestDeliverable)
+                            }
+                            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-semibold text-xs transition-colors flex items-center space-x-1.5"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>
+                              {appliedDeliverableIds[latestDeliverable.id]
+                                ? "Re-Apply Changes"
+                                : "Apply Changes"}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="p-6 rounded-lg bg-stone-950 border border-stone-800 text-center text-xs text-stone-400">

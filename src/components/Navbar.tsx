@@ -25,6 +25,7 @@ import {
   Settings,
   Headphones,
   Building2,
+  Pencil,
 } from "lucide-react";
 import { Book } from "../types";
 import { GoogleAuthButton } from "./GoogleAuthButton";
@@ -57,6 +58,7 @@ interface NavbarProps {
   onSelectTab: (tab: ActiveTab) => void;
   onOpenNewBookModal: () => void;
   onOpenProjectHub?: () => void;
+  onEditProject?: (bookId: string) => void;
   onOpenExportModal: () => void;
   onOpenGoogleDriveModal?: () => void;
   onOpenLandingPage?: () => void;
@@ -78,6 +80,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectTab,
   onOpenNewBookModal,
   onOpenProjectHub,
+  onEditProject,
   onOpenExportModal,
   onOpenGoogleDriveModal,
   onOpenLandingPage,
@@ -173,30 +176,50 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </div>
                     <div className="max-h-60 overflow-y-auto">
                       {(books || []).map((b) => (
-                        <button
+                        <div
                           key={b.id}
-                          onClick={() => {
-                            onSelectBook(b.id);
-                            setDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-3 py-2 text-xs sm:text-sm flex items-center justify-between hover:bg-stone-800 transition-colors ${
+                          className={`w-full flex items-center justify-between px-3 py-2 hover:bg-stone-800 transition-colors ${
                             b.id === activeBook?.id
                               ? "bg-amber-500/10 text-amber-300 font-medium"
                               : "text-stone-300"
                           }`}
                         >
-                          <div className="truncate mr-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSelectBook(b.id);
+                              setDropdownOpen(false);
+                            }}
+                            className="flex-1 text-left text-xs sm:text-sm truncate mr-2 cursor-pointer"
+                          >
                             <div className="truncate font-serif">{b.title}</div>
                             <div className="text-[11px] text-stone-400 flex items-center space-x-1.5">
                               <span>{b.genre}</span>
                               <span>•</span>
                               <span>{(b.chapters || []).length} Ch.</span>
                             </div>
+                          </button>
+                          <div className="flex items-center space-x-1.5 shrink-0">
+                            {onEditProject && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDropdownOpen(false);
+                                  onEditProject(b.id);
+                                }}
+                                className="p-1.5 rounded-lg bg-stone-800/90 hover:bg-amber-500/20 text-stone-400 hover:text-amber-300 border border-stone-700/70 transition-colors cursor-pointer"
+                                title={`Edit "${b.title}"`}
+                                aria-label={`Edit ${b.title}`}
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
+                            {b.id === activeBook?.id && (
+                              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                            )}
                           </div>
-                          {b.id === activeBook?.id && (
-                            <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                          )}
-                        </button>
+                        </div>
                       ))}
                     </div>
                     <div className="border-t border-stone-800 mt-2 pt-2 px-2 space-y-1">

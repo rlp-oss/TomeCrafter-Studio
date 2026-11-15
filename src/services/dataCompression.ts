@@ -263,6 +263,266 @@ export function compressFootnotes(
 }
 
 /**
+ * Validates and normalizes an image URL or inline data URI to match Firestore security rules.
+ */
+export function sanitizeSafeImageRef(val: unknown, maxLen = 500000): string | undefined {
+  if (typeof val !== "string") return undefined;
+  let trimmed = val.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("data:image/")) {
+    trimmed = trimmed.replace(/[\r\n]+/g, "");
+  }
+  if (trimmed.length > maxLen) return undefined;
+  if (
+    /^https?:\/\/.+$/.test(trimmed) ||
+    /^data:image\/(png|jpeg|jpg|webp|gif|svg\+xml);.+$/.test(trimmed) ||
+    /^\/[^\s]+$/.test(trimmed)
+  ) {
+    return trimmed;
+  }
+  return undefined;
+}
+
+function sanitizeSafeLink(val: unknown, maxLen = 512): string {
+  if (typeof val !== "string") return "";
+  const trimmed = val.replace(/[\r\n]+/g, " ").trim().slice(0, maxLen);
+  if (/^\s*(javascript|vbscript|data):/i.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function clampFiniteNumber(val: unknown, min: number, max: number): number | undefined {
+  if (val === null || val === undefined || val === "" || typeof val === "boolean") {
+    return undefined;
+  }
+  const num = typeof val === "number" ? val : Number(val);
+  if (!Number.isFinite(num)) return undefined;
+  return Math.max(min, Math.min(max, num));
+}
+
+function sanitizeFormattingSettingsForFirestore(fs: any): Record<string, any> {
+  if (!fs || typeof fs !== "object") return {};
+  const clean: Record<string, any> = {};
+
+  if (typeof fs.trimSize === "string") clean.trimSize = stripRedundantWhitespace(fs.trimSize).slice(0, 32);
+  if (typeof fs.fontPreset === "string") clean.fontPreset = stripRedundantWhitespace(fs.fontPreset).slice(0, 64);
+  if (typeof fs.googleFontFamily === "string") clean.googleFontFamily = stripRedundantWhitespace(fs.googleFontFamily).slice(0, 120);
+  if (typeof fs.fontColor === "string") clean.fontColor = stripRedundantWhitespace(fs.fontColor).slice(0, 40);
+  if (typeof fs.fontSize === "string") clean.fontSize = stripRedundantWhitespace(fs.fontSize).slice(0, 24);
+
+  const fontSizePx = clampFiniteNumber(fs.fontSizePx, 6, 72);
+  if (fontSizePx !== undefined) clean.fontSizePx = fontSizePx;
+
+  if (typeof fs.lineSpacing === "string") clean.lineSpacing = stripRedundantWhitespace(fs.lineSpacing).slice(0, 24);
+
+  const lineHeightValue = clampFiniteNumber(fs.lineHeightValue, 0.5, 5);
+  if (lineHeightValue !== undefined) clean.lineHeightValue = lineHeightValue;
+
+  const letterSpacingEm = clampFiniteNumber(fs.letterSpacingEm, -0.5, 2);
+  if (letterSpacingEm !== undefined) clean.letterSpacingEm = letterSpacingEm;
+
+  const paragraphIndentEm = clampFiniteNumber(fs.paragraphIndentEm, 0, 10);
+  if (paragraphIndentEm !== undefined) clean.paragraphIndentEm = paragraphIndentEm;
+
+  const paragraphSpacingEm = clampFiniteNumber(fs.paragraphSpacingEm, 0, 10);
+  if (paragraphSpacingEm !== undefined) clean.paragraphSpacingEm = paragraphSpacingEm;
+
+  if (typeof fs.textAlign === "string") clean.textAlign = stripRedundantWhitespace(fs.textAlign).slice(0, 24);
+  if (typeof fs.chapterHeadingCase === "string") clean.chapterHeadingCase = stripRedundantWhitespace(fs.chapterHeadingCase).slice(0, 32);
+
+  const chapterWordBudget = clampFiniteNumber(fs.chapterWordBudget, 0, 500000);
+  if (chapterWordBudget !== undefined) clean.chapterWordBudget = Math.round(chapterWordBudget);
+
+  if (typeof fs.dropCaps === "boolean") clean.dropCaps = fs.dropCaps;
+
+  const dropCapSize = clampFiniteNumber(fs.dropCapSize, 1, 20);
+  if (dropCapSize !== undefined) clean.dropCapSize = dropCapSize;
+
+  if (typeof fs.sceneBreakSymbol === "string") clean.sceneBreakSymbol = stripRedundantWhitespace(fs.sceneBreakSymbol).slice(0, 40);
+  if (typeof fs.showPageNumbers === "boolean") clean.showPageNumbers = fs.showPageNumbers;
+  if (typeof fs.runningHeaders === "boolean") clean.runningHeaders = fs.runningHeaders;
+  if (typeof fs.includeFrontMatter === "boolean") clean.includeFrontMatter = fs.includeFrontMatter;
+  if (typeof fs.includeBackMatter === "boolean") clean.includeBackMatter = fs.includeBackMatter;
+  if (typeof fs.dedicationText === "string") clean.dedicationText = stripRedundantWhitespace(fs.dedicationText).slice(0, 2000);
+  if (typeof fs.copyrightText === "string") clean.copyrightText = stripRedundantWhitespace(fs.copyrightText).slice(0, 2000);
+  if (typeof fs.authorBio === "string") clean.authorBio = stripRedundantWhitespace(fs.authorBio).slice(0, 4000);
+  if (typeof fs.newsletterLink === "string") clean.newsletterLink = sanitizeSafeLink(fs.newsletterLink, 512);
+  if (typeof fs.acknowledgments === "string") clean.acknowledgments = stripRedundantWhitespace(fs.acknowledgments).slice(0, 4000);
+
+  return clean;
+}
+
+function sanitizePublishingKitForFirestore(pk: any): Record<string, any> | undefined {
+  if (!pk || typeof pk !== "object") return undefined;
+
+  const clean: Record<string, any> = {};
+
+  if (typeof pk.commercialTitle === "string" && pk.commercialTitle.trim()) {
+    clean.commercialTitle = stripRedundantWhitespace(pk.commercialTitle).slice(0, 240);
+  }
+  if (typeof pk.catchySubtitle === "string" && pk.catchySubtitle.trim()) {
+    clean.catchySubtitle = stripRedundantWhitespace(pk.catchySubtitle).slice(0, 300);
+  }
+
+  clean.salesBlurb = {
+    hook: stripRedundantWhitespace(String(pk.salesBlurb?.hook || "")).slice(0, 500),
+    body: stripRedundantWhitespace(String(pk.salesBlurb?.body || "")).slice(0, 4000),
+    callToAction: stripRedundantWhitespace(String(pk.salesBlurb?.callToAction || "")).slice(0, 500),
+  };
+
+  clean.amazonKeywords = Array.isArray(pk.amazonKeywords)
+    ? pk.amazonKeywords
+        .map((k: unknown) => stripRedundantWhitespace(String(k || "")).slice(0, 120))
+        .filter(Boolean)
+        .slice(0, 30)
+    : [];
+
+  clean.bisacCategories = Array.isArray(pk.bisacCategories)
+    ? pk.bisacCategories
+        .map((c: unknown) => stripRedundantWhitespace(String(c || "")).slice(0, 160))
+        .filter(Boolean)
+        .slice(0, 20)
+    : [];
+
+  clean.compTitles = Array.isArray(pk.compTitles)
+    ? pk.compTitles
+        .map((c: unknown) => stripRedundantWhitespace(String(c || "")).slice(0, 200))
+        .filter(Boolean)
+        .slice(0, 20)
+    : [];
+
+  clean.targetAudience = stripRedundantWhitespace(String(pk.targetAudience || "")).slice(0, 500);
+
+  if (pk.pricingRecommendations && typeof pk.pricingRecommendations === "object") {
+    const pricing: Record<string, number> = {};
+    const ebook = clampFiniteNumber(pk.pricingRecommendations.ebook, 0, 10000);
+    const paperback = clampFiniteNumber(pk.pricingRecommendations.paperback, 0, 10000);
+    const hardcover = clampFiniteNumber(pk.pricingRecommendations.hardcover, 0, 10000);
+    if (ebook !== undefined) pricing.ebook = ebook;
+    if (paperback !== undefined) pricing.paperback = paperback;
+    if (hardcover !== undefined) pricing.hardcover = hardcover;
+    if (Object.keys(pricing).length > 0) clean.pricingRecommendations = pricing;
+  }
+
+  if (typeof pk.marketingHook === "string" && pk.marketingHook.trim()) {
+    clean.marketingHook = stripRedundantWhitespace(pk.marketingHook).slice(0, 1000);
+  }
+  if (typeof pk.launchStrategy === "string" && pk.launchStrategy.trim()) {
+    clean.launchStrategy = stripRedundantWhitespace(pk.launchStrategy).slice(0, 10000);
+  }
+  if (typeof pk.queryLetter === "string" && pk.queryLetter.trim()) {
+    clean.queryLetter = stripRedundantWhitespace(pk.queryLetter).slice(0, 12000);
+  }
+
+  if (pk.printSpecs && typeof pk.printSpecs === "object") {
+    const specs: Record<string, any> = {};
+    if (typeof pk.printSpecs.recommendedTrimSize === "string") {
+      specs.recommendedTrimSize = stripRedundantWhitespace(pk.printSpecs.recommendedTrimSize).slice(0, 80);
+    }
+    const pageCount = clampFiniteNumber(pk.printSpecs.estimatedPageCount, 0, 50000);
+    if (pageCount !== undefined) {
+      specs.estimatedPageCount = Math.round(pageCount);
+    }
+    const spineWidth = clampFiniteNumber(pk.printSpecs.spineWidthInches, 0, 20);
+    if (spineWidth !== undefined) {
+      specs.spineWidthInches = spineWidth;
+    }
+    if (pk.printSpecs.margins && typeof pk.printSpecs.margins === "object") {
+      const m = pk.printSpecs.margins;
+      const cleanMargins: Record<string, string> = {};
+      if (m.insideGutter !== undefined) cleanMargins.insideGutter = String(m.insideGutter).slice(0, 32);
+      if (m.outside !== undefined) cleanMargins.outside = String(m.outside).slice(0, 32);
+      if (m.top !== undefined) cleanMargins.top = String(m.top).slice(0, 32);
+      if (m.bottom !== undefined) cleanMargins.bottom = String(m.bottom).slice(0, 32);
+      if (Object.keys(cleanMargins).length > 0) specs.margins = cleanMargins;
+    }
+    if (Object.keys(specs).length > 0) clean.printSpecs = specs;
+  }
+
+  if (typeof pk.isbn === "string" && pk.isbn.trim()) {
+    clean.isbn = pk.isbn.trim().slice(0, 40);
+  }
+  if (typeof pk.copyrightYear === "string" && pk.copyrightYear.trim()) {
+    clean.copyrightYear = pk.copyrightYear.trim().slice(0, 16);
+  }
+  if (typeof pk.publisherImprint === "string" && pk.publisherImprint.trim()) {
+    clean.publisherImprint = stripRedundantWhitespace(pk.publisherImprint).slice(0, 160);
+  }
+
+  return clean;
+}
+
+function sanitizeOriginalityReportForFirestore(
+  report: any,
+  maxRecentTransactionsToKeep: number
+): Record<string, any> | undefined {
+  if (!report || typeof report !== "object") return undefined;
+
+  const clean: Record<string, any> = {};
+
+  const score = clampFiniteNumber(report.score, 0, 100);
+  if (score !== undefined) clean.score = score;
+
+  const authorShare = clampFiniteNumber(report.authorSharePercent, 0, 100);
+  if (authorShare !== undefined) {
+    clean.authorSharePercent = authorShare;
+  }
+
+  if (typeof report.copyrightStatus === "string") {
+    clean.copyrightStatus = stripRedundantWhitespace(report.copyrightStatus).slice(0, 160);
+  }
+  if (typeof report.c2paManifestHash === "string") {
+    clean.c2paManifestHash = stripRedundantWhitespace(report.c2paManifestHash).slice(0, 256);
+  }
+  if (typeof report.humanBadgeRoyaltyTier === "string") {
+    clean.humanBadgeRoyaltyTier = stripRedundantWhitespace(report.humanBadgeRoyaltyTier).slice(0, 160);
+  }
+  if (typeof report.badgeRoyaltyTier === "string") {
+    clean.badgeRoyaltyTier = stripRedundantWhitespace(report.badgeRoyaltyTier).slice(0, 160);
+  }
+  if (typeof report.is100PercentOriginal === "boolean") {
+    clean.is100PercentOriginal = report.is100PercentOriginal;
+  }
+
+  const totalRoyalties = clampFiniteNumber(report.totalMicroRoyaltiesSubmitted, 0, 1000000000);
+  if (totalRoyalties !== undefined) {
+    clean.totalMicroRoyaltiesSubmitted = totalRoyalties;
+  }
+
+  clean.taggedAuthors = Array.isArray(report.taggedAuthors)
+    ? report.taggedAuthors.filter((a: unknown) => a && typeof a === "object" && !Array.isArray(a)).slice(0, 100)
+    : [];
+
+  const txLimit = Math.min(50, Math.max(0, maxRecentTransactionsToKeep));
+  clean.recentTransactions =
+    txLimit > 0 && Array.isArray(report.recentTransactions)
+      ? report.recentTransactions.filter((t: unknown) => t && typeof t === "object" && !Array.isArray(t)).slice(-txLimit)
+      : [];
+
+  if (report.breakdown && typeof report.breakdown === "object") {
+    const bd: Record<string, number> = {};
+    const ohv = clampFiniteNumber(report.breakdown.originalHumanVoice, 0, 100);
+    const asn = clampFiniteNumber(report.breakdown.aiSynthesisNovelty, 0, 100);
+    const shs = clampFiniteNumber(report.breakdown.stylisticHomageSimilarity, 0, 100);
+    const rtp = clampFiniteNumber(report.breakdown.referencedTextPercent, 0, 100);
+    if (ohv !== undefined) bd.originalHumanVoice = ohv;
+    if (asn !== undefined) bd.aiSynthesisNovelty = asn;
+    if (shs !== undefined) bd.stylisticHomageSimilarity = shs;
+    if (rtp !== undefined) bd.referencedTextPercent = rtp;
+    if (Object.keys(bd).length > 0) clean.breakdown = bd;
+  }
+
+  clean.analysisNotes = stripRedundantWhitespace(String(report.analysisNotes || "")).slice(0, 4000);
+
+  if (typeof report.lastAuditedAt === "string" && report.lastAuditedAt.trim()) {
+    clean.lastAuditedAt = report.lastAuditedAt.trim().slice(0, 64);
+  }
+
+  return clean;
+}
+
+/**
  * Primary compression engine: minifies and packs a full Book object for Firestore storage.
  * Guarantees document stays under the 1MB Firestore limit while preserving all manuscript text,
  * structure, lore codex, and formatting settings.
@@ -285,18 +545,21 @@ export function compressBookForFirestore(
 
   // 1. Minify Manuscript Chapters and Scenes
   let totalWordsInChapters = 0;
-  const processedChapters: Chapter[] = (rawCopy.chapters || []).map((ch, index) => {
-    const minifiedContent = stripRedundantWhitespace(ch.content || "");
+  const processedChapters: Chapter[] = (rawCopy.chapters || []).slice(0, 300).map((ch, index) => {
+    const minifiedContent = stripRedundantWhitespace(ch.content || "").slice(0, 1000000);
     const wordCount = minifiedContent
       ? minifiedContent.trim().split(/\s+/).filter(Boolean).length
       : 0;
     totalWordsInChapters += wordCount;
 
+    const safeChapterId = String(ch.id || `chapter-${index + 1}`).trim().slice(0, 128) || `chapter-${index + 1}`;
+    const safeChapterTitle = stripRedundantWhitespace(ch.title || `Chapter ${index + 1}`).slice(0, 500) || `Chapter ${index + 1}`;
+
     return {
-      id: ch.id || `chapter-${index + 1}`,
+      id: safeChapterId,
       number: ch.number || index + 1,
       act: stripRedundantWhitespace(ch.act || "Act I"),
-      title: stripRedundantWhitespace(ch.title || `Chapter ${index + 1}`),
+      title: safeChapterTitle,
       summary: stripRedundantWhitespace(ch.summary || ""),
       goal: stripRedundantWhitespace(ch.goal || ""),
       conflict: stripRedundantWhitespace(ch.conflict || ""),
@@ -324,6 +587,14 @@ export function compressBookForFirestore(
     "Vault Media Asset",
     maxInlineIllustrationBytes
   );
+  const sanitizedMediaLibrary = mediaLibRes.illustrations
+    .slice(0, 200)
+    .map((ill, idx) => ({
+      ...ill,
+      id: String(ill.id || `ill-${idx + 1}`).trim().slice(0, 128) || `ill-${idx + 1}`,
+      title: stripRedundantWhitespace(ill.title || "Vault Media Asset").slice(0, 300) || "Vault Media Asset",
+      imageUrl: sanitizeSafeImageRef(ill.imageUrl, 500000) ?? "",
+    }));
   const totalIllCompressed = compressedCount + mediaLibRes.compressedCount;
   const totalIllBytesSaved = bytesSaved + mediaLibRes.bytesSaved;
   if (totalIllCompressed > 0) {
@@ -332,18 +603,19 @@ export function compressBookForFirestore(
     );
   }
 
-  // 3. Compress Cover Image if massive Base64
+  // 3. Compress Cover Image if massive Base64 & validate against safe image ref rules
   let coverImageUrl = rawCopy.coverImageUrl || "";
   if (coverImageUrl.startsWith("data:") && calculateByteSize(coverImageUrl) > 120000) {
     coverImageUrl = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?q=80&w=1000&auto=format&fit=crop";
     optimizationsApplied.push("Replaced oversized inline cover base64 with cloud reference URL");
   }
+  const safeCoverImageUrl = sanitizeSafeImageRef(coverImageUrl, 500000);
 
   // 4. Minify Lore Codex Entries
-  const compressedLoreEntries: LoreEntry[] = (rawCopy.loreEntries || []).map((entry) => ({
-    id: entry.id,
-    name: stripRedundantWhitespace(entry.name),
-    category: entry.category,
+  const compressedLoreEntries: LoreEntry[] = (rawCopy.loreEntries || []).slice(0, 500).map((entry, idx) => ({
+    id: String(entry.id || `lore-${idx + 1}`).trim().slice(0, 128) || `lore-${idx + 1}`,
+    name: stripRedundantWhitespace(entry.name || "Untitled Entry").slice(0, 200) || "Untitled Entry",
+    category: (String(entry.category || "Custom").slice(0, 80) || "Custom") as LoreEntry["category"],
     tagline: stripRedundantWhitespace(entry.tagline || ""),
     description: stripRedundantWhitespace(entry.description || ""),
     secretsOrFlaws: entry.secretsOrFlaws ? stripRedundantWhitespace(entry.secretsOrFlaws) : undefined,
@@ -364,42 +636,15 @@ export function compressBookForFirestore(
   }));
   optimizationsApplied.push("Compacted Lore Codex and stripped empty sensory fields");
 
-  // 5. Minify Publishing Kit & Marketing Metadata
-  const publishingKit = rawCopy.publishingKit
-    ? {
-        commercialTitle: rawCopy.publishingKit.commercialTitle ? stripRedundantWhitespace(rawCopy.publishingKit.commercialTitle) : undefined,
-        catchySubtitle: rawCopy.publishingKit.catchySubtitle ? stripRedundantWhitespace(rawCopy.publishingKit.catchySubtitle) : undefined,
-        salesBlurb: {
-          hook: stripRedundantWhitespace(rawCopy.publishingKit.salesBlurb?.hook || ""),
-          body: stripRedundantWhitespace(rawCopy.publishingKit.salesBlurb?.body || ""),
-          callToAction: stripRedundantWhitespace(rawCopy.publishingKit.salesBlurb?.callToAction || ""),
-        },
-        amazonKeywords: (rawCopy.publishingKit.amazonKeywords || []).map((k) => stripRedundantWhitespace(k)).filter(Boolean),
-        bisacCategories: (rawCopy.publishingKit.bisacCategories || []).map((c) => stripRedundantWhitespace(c)).filter(Boolean),
-        compTitles: (rawCopy.publishingKit.compTitles || []).map((c) => stripRedundantWhitespace(c)).filter(Boolean),
-        targetAudience: stripRedundantWhitespace(rawCopy.publishingKit.targetAudience || ""),
-        pricingRecommendations: rawCopy.publishingKit.pricingRecommendations,
-        marketingHook: rawCopy.publishingKit.marketingHook ? stripRedundantWhitespace(rawCopy.publishingKit.marketingHook) : undefined,
-        launchStrategy: rawCopy.publishingKit.launchStrategy ? stripRedundantWhitespace(rawCopy.publishingKit.launchStrategy) : undefined,
-        queryLetter: rawCopy.publishingKit.queryLetter ? stripRedundantWhitespace(rawCopy.publishingKit.queryLetter) : undefined,
-        printSpecs: rawCopy.publishingKit.printSpecs,
-        isbn: rawCopy.publishingKit.isbn?.trim() || undefined,
-        copyrightYear: rawCopy.publishingKit.copyrightYear?.trim() || undefined,
-        publisherImprint: rawCopy.publishingKit.publisherImprint ? stripRedundantWhitespace(rawCopy.publishingKit.publisherImprint) : undefined,
-      }
-    : undefined;
+  // 5. Minify & Strictly Sanitize Publishing Kit, Formatting Settings, and Originality Report
+  const publishingKit = sanitizePublishingKitForFirestore(rawCopy.publishingKit);
+  const formattingSettings = sanitizeFormattingSettingsForFirestore(rawCopy.formattingSettings);
+  const originalityReport = sanitizeOriginalityReportForFirestore(
+    rawCopy.originalityReport,
+    maxRecentTransactionsToKeep
+  );
 
-  // 6. Minify Originality Report & Bound Recent Transactions
-  const originalityReport = rawCopy.originalityReport
-    ? {
-        ...rawCopy.originalityReport,
-        analysisNotes: stripRedundantWhitespace(rawCopy.originalityReport.analysisNotes || ""),
-        recentTransactions: (rawCopy.originalityReport.recentTransactions || []).slice(-maxRecentTransactionsToKeep),
-        taggedAuthors: rawCopy.originalityReport.taggedAuthors || [],
-      }
-    : undefined;
-
-  // 7. Assemble Compressed Book Structure aligned with firebase-blueprint.json
+  // 6. Assemble Compressed Book Structure aligned with firebase-blueprint.json & firestore.rules
   const safeTitle = stripRedundantWhitespace(rawCopy.title || "Untitled Tome").slice(0, 200) || "Untitled Tome";
   const safeAuthor = stripRedundantWhitespace(rawCopy.author || "Anonymous Author").slice(0, 120) || "Anonymous Author";
   const safeGenre = (rawCopy.genre || "Epic Fantasy").toString().slice(0, 80) || "Epic Fantasy";
@@ -430,18 +675,18 @@ export function compressBookForFirestore(
     premise: stripRedundantWhitespace(rawCopy.premise || "").slice(0, 8000),
     tone: stripRedundantWhitespace(rawCopy.tone || "").slice(0, 240),
     targetAudience: rawCopy.targetAudience ? stripRedundantWhitespace(rawCopy.targetAudience).slice(0, 200) : undefined,
-    coverImageUrl: coverImageUrl && coverImageUrl.length <= 500000 ? coverImageUrl : undefined,
+    coverImageUrl: safeCoverImageUrl ?? "",
     coverTitleFont: rawCopy.coverTitleFont ? String(rawCopy.coverTitleFont).slice(0, 80) : undefined,
     coverAccentColor: rawCopy.coverAccentColor ? String(rawCopy.coverAccentColor).slice(0, 40) : undefined,
-    chapters: finalChapters.slice(0, 300),
-    mediaLibrary: mediaLibRes.illustrations.length > 0 ? mediaLibRes.illustrations.slice(0, 200) : undefined,
-    loreEntries: compressedLoreEntries.slice(0, 500),
+    chapters: finalChapters,
+    mediaLibrary: sanitizedMediaLibrary,
+    loreEntries: compressedLoreEntries,
     publishingKit: publishingKit,
-    formattingSettings: rawCopy.formattingSettings || {},
+    formattingSettings: formattingSettings,
     originalityReport: originalityReport,
   };
 
-  // 8. Run Deep Structure Key Minification
+  // 7. Run Deep Structure Key Minification
   const finalCompressedBook = minifyDeepStructures(compressedBookUnpruned);
 
   const compressedBytes = calculateByteSize(finalCompressedBook);
