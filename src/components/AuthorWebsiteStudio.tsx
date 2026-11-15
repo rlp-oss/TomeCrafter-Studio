@@ -63,25 +63,52 @@ import { apiService } from "../services/api";
 
 interface AuthorWebsiteStudioProps {
   book: Book;
+  onUpdateBook?: (updatedBook: Book) => void;
 }
 
 type StudioTab = "platforms" | "presets" | "content" | "styling" | "ai_prompt" | "code_export";
 type ViewportMode = "desktop" | "tablet" | "mobile";
 
-export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }) => {
-  // Website configuration state
-  const [config, setConfig] = useState<AuthorWebsiteConfig>(() => {
-    // Try to load from localStorage first
-    const saved = localStorage.getItem(`author_website_${book.id}`);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // fallback
-      }
+const buildBookSyncedWebsiteConfig = (targetBook: Book): AuthorWebsiteConfig => {
+  const defaults = generateDefaultAuthorWebsite(targetBook);
+  const saved = localStorage.getItem(`author_website_${targetBook.id}`);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      return {
+        ...defaults,
+        ...parsed,
+        showPublisherBox: parsed.showPublisherBox ?? true,
+        publisherName:
+          parsed.publisherName ||
+          targetBook.publishingKit?.publisherImprint ||
+          defaults.publisherName,
+        publisherLocation:
+          parsed.publisherLocation || defaults.publisherLocation,
+        publisherWebsiteUrl:
+          parsed.publisherWebsiteUrl || defaults.publisherWebsiteUrl,
+        publisherTagline:
+          parsed.publisherTagline || defaults.publisherTagline,
+        publisherIsbn:
+          parsed.publisherIsbn ??
+          targetBook.publishingKit?.isbn ??
+          defaults.publisherIsbn,
+      };
+    } catch {
+      // fallback to defaults
     }
-    return generateDefaultAuthorWebsite(book);
-  });
+  }
+  return defaults;
+};
+
+export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({
+  book,
+  onUpdateBook,
+}) => {
+  // Website configuration state
+  const [config, setConfig] = useState<AuthorWebsiteConfig>(() =>
+    buildBookSyncedWebsiteConfig(book)
+  );
 
   // UI state
   const [activeTab, setActiveTab] = useState<StudioTab>("platforms");
@@ -111,6 +138,18 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
 
   // Live Iframe preview ref
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const prevBookIdRef = useRef<string>(book.id);
+
+  // Sync website config when active book changes
+  useEffect(() => {
+    if (prevBookIdRef.current !== book.id) {
+      prevBookIdRef.current = book.id;
+      skipNextUnsavedRef.current = true;
+      setConfig(buildBookSyncedWebsiteConfig(book));
+      setSaveStatus("saved");
+    }
+  }, [book]);
 
   // Track edits as unsaved rather than firing continuous auto-save writes
   useEffect(() => {
@@ -153,6 +192,42 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
       setSaveStatus("unsaved");
       showToast(err?.message || "Failed to save author website to server.", "error");
     }
+  };
+
+  // Sync Publisher Imprint & Official Author Bio straight into Active Book Front/Back Matter
+  const handleSyncPublisherAndBioToBook = () => {
+    if (!onUpdateBook) {
+      showToast("Book state sync is unavailable here.", "error");
+      return;
+    }
+    const formattedImprint = [
+      config.publisherName?.trim() || "Rhythm Logic Publishing",
+      config.publisherLocation?.trim() || "",
+    ]
+      .filter(Boolean)
+      .join(" • ");
+
+    onUpdateBook({
+      ...book,
+      author: config.authorName?.trim() || book.author,
+      publishingKit: {
+        ...book.publishingKit,
+        publisherImprint: formattedImprint,
+        isbn: config.publisherIsbn?.trim() || book.publishingKit?.isbn,
+      },
+      formattingSettings: {
+        ...book.formattingSettings,
+        authorBio: config.bio?.trim() || book.formattingSettings?.authorBio || "",
+        newsletterLink:
+          config.publisherWebsiteUrl?.trim() ||
+          book.formattingSettings?.newsletterLink ||
+          "",
+      },
+      updatedAt: new Date().toISOString(),
+    });
+    showToast(
+      `Synced "${formattedImprint}" & Author Bio to "${book.title}" front/back matter.`
+    );
   };
 
   // Update preview iframe content whenever config changes
@@ -873,6 +948,132 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
                   </div>
                 </div>
 
+                {/* Publisher & Imprint Box */}
+                <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                      Publisher &amp; Imprint Box
+                    </span>
+                    <label className="flex items-center space-x-2 text-xs text-stone-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showPublisherBox !== false}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            showPublisherBox: e.target.checked,
+                          }))
+                        }
+                        className="w-3.5 h-3.5 text-amber-500 rounded bg-stone-950 border-stone-700"
+                      />
+                      <span>Show on Page</span>
+                    </label>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-stone-300 font-medium">
+                      Publisher / Imprint Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={config.publisherName || ""}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          publisherName: e.target.value,
+                        }))
+                      }
+                      placeholder="Rhythm Logic Publishing"
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-200 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-stone-300 font-medium">
+                        Publisher Location
+                      </label>
+                      <input
+                        type="text"
+                        value={config.publisherLocation || ""}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            publisherLocation: e.target.value,
+                          }))
+                        }
+                        placeholder="Red Deer, Alberta, Canada"
+                        className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-200 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-stone-300 font-medium">
+                        Edition ISBN
+                      </label>
+                      <input
+                        type="text"
+                        value={config.publisherIsbn || ""}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            publisherIsbn: e.target.value,
+                          }))
+                        }
+                        placeholder="978-1-..."
+                        className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-200 font-mono focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-stone-300 font-medium">
+                      Publisher Website URL
+                    </label>
+                    <input
+                      type="url"
+                      value={config.publisherWebsiteUrl || ""}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          publisherWebsiteUrl: e.target.value,
+                        }))
+                      }
+                      placeholder="https://rhythmlogicpublishing.com"
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-200 font-mono focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-stone-300 font-medium">
+                      Imprint Statement / Tagline
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={config.publisherTagline || ""}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          publisherTagline: e.target.value,
+                        }))
+                      }
+                      placeholder="Independent Publishing Imprint · Registered Edition & Provenance Catalog"
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-200 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  {onUpdateBook && (
+                    <button
+                      type="button"
+                      onClick={handleSyncPublisherAndBioToBook}
+                      className="w-full py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-xs font-semibold transition-colors flex items-center justify-center space-x-2"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Sync Publisher Imprint &amp; Author Bio to Book Export</span>
+                    </button>
+                  )}
+                </div>
+
                 {/* Hero Section Copy */}
                 <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3.5">
                   <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
@@ -1261,6 +1462,16 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
                         type="checkbox"
                         checked={config.showMediaKit}
                         onChange={(e) => setConfig((prev) => ({ ...prev, showMediaKit: e.target.checked }))}
+                        className="w-4 h-4 text-amber-500 rounded bg-stone-900 border-stone-700"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between p-2 rounded-xl bg-stone-950 border border-stone-800 text-xs text-stone-300 cursor-pointer">
+                      <span>Publisher &amp; Imprint Box</span>
+                      <input
+                        type="checkbox"
+                        checked={config.showPublisherBox !== false}
+                        onChange={(e) => setConfig((prev) => ({ ...prev, showPublisherBox: e.target.checked }))}
                         className="w-4 h-4 text-amber-500 rounded bg-stone-900 border-stone-700"
                       />
                     </label>

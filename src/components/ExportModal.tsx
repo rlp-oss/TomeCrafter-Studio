@@ -607,7 +607,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ book, onClose, onUpdat
           <div className="flex items-center space-x-2 text-xs text-stone-500">
             <span>ISBN: {book.publishingKit?.isbn || "978-1-95482-104-9"}</span>
             <span>•</span>
-            <span>Imprint: {book.publishingKit?.publisherImprint || "Aether & Iron Press"}</span>
+            <span>Imprint: {book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}</span>
           </div>
 
           <button

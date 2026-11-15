@@ -922,7 +922,7 @@ export default function App() {
         )}
 
         {activeTab === "website" && (
-          <AuthorWebsiteStudio book={activeBook} />
+          <AuthorWebsiteStudio book={activeBook} onUpdateBook={handleUpdateBook} />
         )}
 
         {activeTab === "store" && (

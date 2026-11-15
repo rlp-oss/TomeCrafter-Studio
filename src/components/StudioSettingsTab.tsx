@@ -367,11 +367,11 @@ export const StudioSettingsTab: React.FC<StudioSettingsTabProps> = ({
       ...book,
       publishingKit: {
         ...book.publishingKit,
-        publisherImprint: imprintName || settings?.imprintName || "Aether & Iron Press",
+        publisherImprint: imprintName || settings?.imprintName || "Rhythm Logic Publishing • Red Deer, Alberta, Canada",
       },
       formattingSettings: {
         ...book.formattingSettings,
-        copyrightText: `Published by ${imprintName || settings?.imprintName || "Aether & Iron Press"}. All rights reserved.`,
+        copyrightText: `Published by ${imprintName || settings?.imprintName || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}. All rights reserved.`,
       },
       updatedAt: new Date().toISOString(),
     });

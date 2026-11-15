@@ -164,7 +164,7 @@ export function generateBackCoverSVG(book: Book): string {
 
   <!-- Standard Publisher Seal -->
   <g transform="translate(50, 640)">
-    <text x="250" y="40" text-anchor="middle" fill="#a1a1aa" font-size="12" font-family="sans-serif">Published by ${book.publishingKit?.publisherImprint || "Aether & Iron Press"}</text>
+    <text x="250" y="40" text-anchor="middle" fill="#a1a1aa" font-size="12" font-family="sans-serif">Published by ${book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}</text>
   </g>
 
   <!-- Bottom Barcode & ISBN Area -->
@@ -393,7 +393,7 @@ export async function generatePrintableManuscriptHTML(book: Book, publisher: Pub
     <!-- 2. Copyright & Ethical Provenance -->
     <div class="copyright-page page-break">
       <p style="text-indent:0;">${book.formattingSettings?.copyrightText || `Copyright © ${new Date().getFullYear()} ${book.author}. All rights reserved.`}</p>
-      <p style="text-indent:0; margin-top:8px;">Publisher Imprint: ${book.publishingKit?.publisherImprint || "Aether & Iron Press"}</p>
+      <p style="text-indent:0; margin-top:8px;">Publisher Imprint: ${book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}</p>
       <p style="text-indent:0;">ISBN: ${book.publishingKit?.isbn || "978-1-95482-104-9"}</p>
       <p style="text-indent:0;">Target Format: ${publisherMeta.targetFormat} • Trim: 6 x 9 in</p>
 
@@ -408,7 +408,7 @@ export async function generatePrintableManuscriptHTML(book: Book, publisher: Pub
       <h1>${book.title}</h1>
       ${book.subtitle ? `<h3>${book.subtitle}</h3>` : ""}
       <div class="author">By ${book.author}</div>
-      <div class="imprint">${book.publishingKit?.publisherImprint || "Aether & Iron Press"}</div>
+      <div class="imprint">${book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}</div>
     </div>
 
     <!-- 4. Dedication -->
@@ -482,7 +482,12 @@ export async function generatePrintableManuscriptHTML(book: Book, publisher: Pub
         <h2>About the Author</h2>
       </div>
       <p class="first-para" style="text-align:justify;">
-        ${book.formattingSettings?.authorBio || `${book.author} is a dedicated speculative fiction author.`}
+        ${
+          book.formattingSettings?.authorBio?.trim() ||
+          ((book.author || "").toLowerCase().includes("germain")
+            ? "C.W. (Cody) Germain is an independent software systems architect and founder based in Red Deer, Alberta, Canada, building cleanroom AI systems, cryptographic provenance infrastructure, and sustainable economic models."
+            : `${book.author || "The author"} is an independent author and researcher publishing ${book.genre || "original works"} through ${book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}.`)
+        }
       </p>
       ${
         book.formattingSettings?.newsletterLink
@@ -547,7 +552,7 @@ export async function createPublisherPackageZip(book: Book, publisher: Publisher
       author: book.author,
       genre: book.genre,
       isbn: book.publishingKit?.isbn || "978-1-95482-104-9",
-      publisherImprint: book.publishingKit?.publisherImprint || "Aether & Iron Press",
+      publisherImprint: book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada",
       targetAudience: book.publishingKit?.targetAudience || "Adult & Cross-over YA",
       salesBlurb: book.publishingKit?.salesBlurb,
       amazonKeywords: book.publishingKit?.amazonKeywords || [],

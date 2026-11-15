@@ -46,8 +46,10 @@ export const AutoTypesetting: React.FC<AutoTypesettingProps> = ({
     includeBackMatter: true,
     dedicationText: "For those who believe in stories.",
     copyrightText: `Copyright © ${new Date().getFullYear()} ${book.author}. All rights reserved.`,
-    authorBio: `${book.author} is a dedicated author of immersive speculative fiction.`,
-    newsletterLink: "https://example.com/newsletter",
+    authorBio: (book.author || "").toLowerCase().includes("germain")
+      ? "C.W. (Cody) Germain is an independent software systems architect and founder based in Red Deer, Alberta, Canada."
+      : `${book.author} is an independent author and researcher.`,
+    newsletterLink: "https://rhythmlogicpublishing.com",
     acknowledgments: "Gratitude to readers and editors.",
   };
 
@@ -267,7 +269,7 @@ export const AutoTypesetting: React.FC<AutoTypesettingProps> = ({
                 {book.author}
               </div>
               <div className="pt-4 text-[10px] text-stone-500 font-serif">
-                {book.publishingKit?.publisherImprint || "Aether & Iron Press"}
+                {book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}
               </div>
             </div>
           )}

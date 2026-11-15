@@ -443,7 +443,7 @@ Target Platforms: Amazon KDP, IngramSpark, Barnes & Noble Press, Lulu`;
                         {book.formattingSettings?.authorBio || "Author of acclaimed works on ethical provenance and sovereign creation."}
                       </div>
                       <div className="text-[7px] sm:text-[8px] font-mono text-stone-500">
-                        {book.publishingKit?.publisherImprint || "Aether & Iron Press"}
+                        {book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}
                       </div>
                     </div>
 
@@ -906,7 +906,7 @@ Target Platforms: Amazon KDP, IngramSpark, Barnes & Noble Press, Lulu`;
                   </div>
 
                   <span className="text-[9px] font-mono uppercase text-stone-400">
-                    {book.publishingKit?.publisherImprint?.slice(0, 12) || "AETHER & IRON"}
+                    {book.publishingKit?.publisherImprint?.slice(0, 12) || "RHYTHM LOGIC"}
                   </span>
                 </div>
               </div>
@@ -950,7 +950,7 @@ Target Platforms: Amazon KDP, IngramSpark, Barnes & Noble Press, Lulu`;
                       {book.author}
                     </div>
                     <div className="text-[9px] font-mono text-stone-500">
-                      {book.publishingKit?.publisherImprint || "Aether & Iron Press"}
+                      {book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada"}
                     </div>
                   </div>
 

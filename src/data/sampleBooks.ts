@@ -83,6 +83,7 @@ The Sovereign Author is not a retreat into neo-Luddite isolationism. Rather, it 
       ],
       targetAudience: "Authors, technologists, creative directors, policymakers, and forward-thinking readers.",
       queryLetter: "Dear Publisher...",
+      publisherImprint: "Rhythm Logic Publishing • Red Deer, Alberta, Canada",
       printSpecs: {
         recommendedTrimSize: "6 x 9 inches (Trade Paperback)",
         estimatedPageCount: 220,
@@ -108,8 +109,8 @@ The Sovereign Author is not a retreat into neo-Luddite isolationism. Rather, it 
       includeBackMatter: true,
       dedicationText: "To every creator whose courage and craft have enriched our collective consciousness.",
       copyrightText: "Copyright © 2026 C.W. Germain. All rights reserved. Registered with C2PA Provenance Registry.",
-      authorBio: "C.W. Germain is an author, researcher, and creator rights advocate pioneering ethical AI frameworks.",
-      newsletterLink: "https://aetherandiron.press",
+      authorBio: "C.W. (Cody) Germain is an independent software systems architect and founder based in Red Deer, Alberta, Canada, building cleanroom AI systems, C2PA provenance infrastructure, and equitable economic frameworks.",
+      newsletterLink: "https://rhythmlogicpublishing.com",
       acknowledgments: "Gratitude to the global creator community and provenance working groups.",
     },
     originalityReport: {

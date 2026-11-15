@@ -71,7 +71,7 @@ export const PublishingSuite: React.FC<PublishingSuiteProps> = ({
     launchStrategy:
       "1. Build ARC (Advance Reader Copy) team of 50 reviewers.\n2. 3-week pre-order discount campaign at $2.99.\n3. Newsletter swap with top fantasy authors.",
     isbn: "978-1-95482-104-9",
-    publisherImprint: "Aether & Iron Press",
+    publisherImprint: "Rhythm Logic Publishing • Red Deer, Alberta, Canada",
   };
 
   const rawKit = book.publishingKit;
@@ -123,7 +123,7 @@ export const PublishingSuite: React.FC<PublishingSuiteProps> = ({
         marketingHook: result.marketingHook || kit.marketingHook,
         launchStrategy: result.launchStrategy || kit.launchStrategy,
         isbn: book.publishingKit?.isbn || "978-1-95482-104-9",
-        publisherImprint: book.publishingKit?.publisherImprint || "Aether & Iron Press",
+        publisherImprint: book.publishingKit?.publisherImprint || "Rhythm Logic Publishing • Red Deer, Alberta, Canada",
       };
 
       onUpdateBook({

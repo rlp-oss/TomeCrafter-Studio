@@ -876,6 +876,12 @@ export interface AuthorWebsiteConfig {
   showAllBooks: boolean;
   showMediaKit: boolean;
   showContactForm: boolean;
+  showPublisherBox?: boolean;
+  publisherName?: string;
+  publisherLocation?: string;
+  publisherWebsiteUrl?: string;
+  publisherTagline?: string;
+  publisherIsbn?: string;
   customCss?: string;
   lastSaved: string;
 }

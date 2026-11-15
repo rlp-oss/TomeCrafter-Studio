@@ -421,14 +421,23 @@ export function generateDefaultAuthorWebsite(book: Book): AuthorWebsiteConfig {
 
   const style = GENRE_PRESET_STYLES[genrePreset];
   const firstChapter = book.chapters && book.chapters.length > 0 ? book.chapters[0] : null;
+  const authorLower = (book.author || "").toLowerCase();
+  const isGermain = authorLower.includes("germain");
+  const defaultBio = book.formattingSettings?.authorBio?.trim()
+    ? book.formattingSettings.authorBio.trim()
+    : isGermain
+    ? "C.W. (Cody) Germain is an independent software systems architect and founder based in Red Deer, Alberta, Canada, building cleanroom AI systems, C2PA provenance infrastructure, and equitable economic frameworks."
+    : `${book.author || "C.W. Germain"} is an independent author and researcher crafting rigorous ${book.genre || "Non-Fiction"} works.`;
 
   return {
     id: `site-${book.id || "default"}`,
     authorName: book.author || "C.W. Germain",
-    tagline: `Author of Immersive ${book.genre || "Non-Fiction & Ethical AI"} Works`,
-    bio: `${book.author || "C.W. Germain"} is an author, researcher, and creator rights advocate crafting visionary works on human provenance, ethical technology, and creative evolution. When not writing or conducting research, they collaborate with creators globally to ensure equitable attribution.`,
+    tagline: isGermain
+      ? "Software Systems Architect & Founder · Red Deer, Alberta"
+      : `Author of ${book.genre || "Non-Fiction"} Works`,
+    bio: defaultBio,
     authorPhotoUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80",
-    location: "Pacific Northwest / Oxford",
+    location: isGermain ? "Red Deer, Alberta, Canada" : "Red Deer, Alberta, Canada",
     genrePreset,
     layout: "modern_landing",
     primaryColor: style.primaryColor,
@@ -585,6 +594,15 @@ export function generateDefaultAuthorWebsite(book: Book): AuthorWebsiteConfig {
     showAllBooks: true,
     showMediaKit: true,
     showContactForm: true,
+    showPublisherBox: true,
+    publisherName:
+      book.publishingKit?.publisherImprint || "Rhythm Logic Publishing",
+    publisherLocation: "Red Deer, Alberta, Canada",
+    publisherWebsiteUrl:
+      book.formattingSettings?.newsletterLink || "https://rhythmlogicpublishing.com",
+    publisherTagline:
+      "Independent Publishing Imprint · Registered Edition & Provenance Catalog",
+    publisherIsbn: book.publishingKit?.isbn || "",
     lastSaved: new Date().toISOString(),
   };
 }
@@ -898,6 +916,41 @@ export function generateStandaloneHtml(config: AuthorWebsiteConfig): string {
             </a>
           </div>
         ` : ""}
+
+        ${config.showPublisherBox !== false && config.publisherName ? `
+          <div id="publisher" class="mt-6 p-5 rounded-2xl border space-y-2" style="background-color: ${config.cardBackgroundColor}; border-color: ${config.primaryColor}35;">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-[11px] font-mono uppercase tracking-widest font-bold" style="color: ${config.primaryColor}">
+                Publisher &amp; Imprint
+              </span>
+              ${config.publisherIsbn ? `
+                <span class="text-[11px] font-mono" style="color: ${config.textMutedColor}">
+                  ISBN: ${escapeHtml(config.publisherIsbn)}
+                </span>
+              ` : ""}
+            </div>
+            <div class="text-lg font-heading font-bold" style="color: ${config.textColor}">
+              ${escapeHtml(config.publisherName)}
+            </div>
+            ${config.publisherLocation ? `
+              <div class="text-xs font-mono" style="color: ${config.textMutedColor}">
+                ${escapeHtml(config.publisherLocation)}
+              </div>
+            ` : ""}
+            ${config.publisherTagline ? `
+              <p class="text-xs leading-relaxed" style="color: ${config.textMutedColor}">
+                ${escapeHtml(config.publisherTagline)}
+              </p>
+            ` : ""}
+            ${config.publisherWebsiteUrl ? `
+              <div class="pt-1">
+                <a href="${escapeHtml(config.publisherWebsiteUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center space-x-1 text-xs font-mono font-semibold hover:underline" style="color: ${config.primaryColor}">
+                  <span>Visit Publisher Imprint →</span>
+                </a>
+              </div>
+            ` : ""}
+          </div>
+        ` : ""}
       </div>
     </div>
   </section>
@@ -1004,7 +1057,7 @@ export function generateStandaloneHtml(config: AuthorWebsiteConfig): string {
       </div>
 
       <div class="pt-8 border-t text-center text-xs space-y-1" style="border-color: ${config.cardBackgroundColor}; color: ${config.textMutedColor}">
-        <div>© ${new Date().getFullYear()} ${escapeHtml(config.authorName)}. All Rights Reserved.</div>
+        <div>© ${new Date().getFullYear()} ${escapeHtml(config.authorName)}${config.publisherName ? ` · Published by ${escapeHtml(config.publisherName)}${config.publisherLocation ? ` (${escapeHtml(config.publisherLocation)})` : ""}` : ""}. All Rights Reserved.</div>
         <div class="text-[10px] opacity-75">Generated with TomeCrafter Author Studio</div>
       </div>
     </div>
