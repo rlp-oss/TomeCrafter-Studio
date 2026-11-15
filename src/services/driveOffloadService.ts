@@ -27,6 +27,7 @@ import {
   calculateByteSize,
   formatBytes,
   sanitizeSafeImageRef,
+  findBookRuleViolations,
   FIRESTORE_MAX_DOCUMENT_BYTES,
   FIRESTORE_SAFE_THRESHOLD_BYTES,
 } from "./dataCompression";
@@ -152,6 +153,44 @@ async function persistBookRecord(
     }
   }
 
+  const REQUIRED_OR_IMMUTABLE_KEYS = new Set([
+    "id",
+    "userId",
+    "createdAt",
+    "updatedAt",
+    "title",
+    "author",
+    "genre",
+    "targetWordCount",
+    "currentWordCount",
+  ]);
+
+  const buildUpdatePayload = (docData: Record<string, any> | null): Record<string, any> => {
+    const payload: Record<string, any> = {
+      ...mutableFields,
+      updatedAt: serverTimestamp(),
+    };
+    if (docData) {
+      if (!docData.id) {
+        payload.id = safeId;
+      }
+      if (!docData.createdAt || typeof docData.createdAt?.toDate !== "function") {
+        payload.createdAt = serverTimestamp();
+      }
+      // Clean any optional allowed field present on existing doc that is absent from mutableFields
+      for (const existingKey of Object.keys(docData)) {
+        if (
+          ALLOWED_FIRESTORE_BOOK_KEYS.has(existingKey) &&
+          !REQUIRED_OR_IMMUTABLE_KEYS.has(existingKey) &&
+          !(existingKey in mutableFields)
+        ) {
+          payload[existingKey] = deleteField();
+        }
+      }
+    }
+    return payload;
+  };
+
   if (!existsInCloud) {
     try {
       await setDoc(docRef, {
@@ -163,48 +202,17 @@ async function persistBookRecord(
       });
       knownCloudBookIds.add(safeId);
     } catch (err) {
+      const localIssues = findBookRuleViolations(
+        { ...mutableFields, id: safeId, userId },
+        safeId,
+        ALLOWED_FIRESTORE_BOOK_KEYS
+      );
+      if (localIssues.length > 0) {
+        console.error("[CloudSync] Client schema violations on create:", localIssues);
+      }
       handleFirestoreError(err, OperationType.CREATE, path);
     }
   } else {
-    const buildUpdatePayload = (docData: Record<string, any> | null): Record<string, any> => {
-      const payload: Record<string, any> = {
-        ...mutableFields,
-        updatedAt: serverTimestamp(),
-      };
-      if (docData) {
-        if (!docData.id) {
-          payload.id = safeId;
-        }
-        if (!docData.createdAt || typeof docData.createdAt?.toDate !== "function") {
-          payload.createdAt = serverTimestamp();
-        }
-        if ("coverImage" in docData && !("coverImage" in mutableFields)) {
-          payload.coverImage = deleteField();
-        }
-        if ("frontCoverImage" in docData && !("frontCoverImage" in mutableFields)) {
-          payload.frontCoverImage = deleteField();
-        }
-        if (mutableFields.isOffloadedToDrive === false) {
-          if ("chapterOutlines" in docData) payload.chapterOutlines = deleteField();
-          if ("loreSummaries" in docData) payload.loreSummaries = deleteField();
-          if ("_stubVersion" in docData) payload._stubVersion = deleteField();
-        }
-        if ("dailyWordCountGoal" in docData && !("dailyWordCountGoal" in mutableFields)) {
-          payload.dailyWordCountGoal = deleteField();
-        }
-        if ("wordGoalMode" in docData && !("wordGoalMode" in mutableFields)) {
-          payload.wordGoalMode = deleteField();
-        }
-        if ("dailyWordBaselineCount" in docData && !("dailyWordBaselineCount" in mutableFields)) {
-          payload.dailyWordBaselineCount = deleteField();
-        }
-        if ("dailyWordBaselineDate" in docData && !("dailyWordBaselineDate" in mutableFields)) {
-          payload.dailyWordBaselineDate = deleteField();
-        }
-      }
-      return payload;
-    };
-
     try {
       await updateDoc(docRef, buildUpdatePayload(existingData));
     } catch (err) {
@@ -212,55 +220,82 @@ async function persistBookRecord(
       if (msg.includes("Missing or insufficient permissions")) {
         try {
           const freshSnap = await getDoc(docRef);
-          if (freshSnap.exists()) {
-            const freshData = freshSnap.data() as Record<string, any>;
-            const hasUnknownLegacyKeys = Object.keys(freshData).some(
-              (k) => !ALLOWED_FIRESTORE_BOOK_KEYS.has(k)
-            );
-            const hasMismatchedId = Boolean(freshData.id && freshData.id !== safeId);
-            const hasLegacyFields =
-              !freshData.id ||
-              !freshData.createdAt ||
-              typeof freshData.createdAt?.toDate !== "function" ||
-              "coverImage" in freshData ||
-              "frontCoverImage" in freshData ||
-              (mutableFields.isOffloadedToDrive === false &&
-                ("chapterOutlines" in freshData ||
-                  "loreSummaries" in freshData ||
-                  "_stubVersion" in freshData)) ||
-              ("dailyWordCountGoal" in freshData &&
-                (typeof freshData.dailyWordCountGoal !== "number" ||
-                  freshData.dailyWordCountGoal < 1 ||
-                  freshData.dailyWordCountGoal > 1000000)) ||
-              ("wordGoalMode" in freshData &&
-                freshData.wordGoalMode !== "project" &&
-                freshData.wordGoalMode !== "daily");
+          if (!freshSnap.exists()) {
+            await setDoc(docRef, {
+              ...mutableFields,
+              id: safeId,
+              userId,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+            knownCloudBookIds.add(safeId);
+            return;
+          }
 
-            if (hasLegacyFields && !hasUnknownLegacyKeys && !hasMismatchedId) {
-              try {
-                await updateDoc(docRef, buildUpdatePayload(freshData));
-                return;
-              } catch {
-                // Fall through to legacy document replacement if existing fields violate schema
-              }
-            }
+          const freshData = freshSnap.data() as Record<string, any>;
+          const existingIssues = findBookRuleViolations(
+            freshData,
+            safeId,
+            ALLOWED_FIRESTORE_BOOK_KEYS
+          );
+          const hasUnknownLegacyKeys = Object.keys(freshData).some(
+            (k) => !ALLOWED_FIRESTORE_BOOK_KEYS.has(k)
+          );
+          const hasMismatchedId = Boolean(freshData.id && freshData.id !== safeId);
+          const hasInvalidUserId = !/^[a-zA-Z0-9_-]{1,128}$/.test(String(freshData.userId || ""));
 
-            if (
-              (hasUnknownLegacyKeys || hasMismatchedId || hasLegacyFields) &&
-              (!freshData.userId || freshData.userId === userId)
-            ) {
-              await deleteDoc(docRef);
-              await setDoc(docRef, {
-                ...mutableFields,
-                id: safeId,
-                userId,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
-              knownCloudBookIds.add(safeId);
+          let retryFailed = false;
+          // Retry updateDoc with full freshData cleanup if we hadn't inspected freshData yet
+          if (
+            !hasUnknownLegacyKeys &&
+            !hasMismatchedId &&
+            !hasInvalidUserId &&
+            existingData === null
+          ) {
+            try {
+              await updateDoc(docRef, buildUpdatePayload(freshData));
               return;
+            } catch {
+              retryFailed = true;
             }
           }
+
+          const outgoingIssues = findBookRuleViolations(
+            { ...mutableFields, id: safeId, userId },
+            safeId,
+            ALLOWED_FIRESTORE_BOOK_KEYS
+          );
+
+          if (
+            outgoingIssues.length === 0 &&
+            (retryFailed ||
+              existingData !== null ||
+              hasUnknownLegacyKeys ||
+              hasMismatchedId ||
+              hasInvalidUserId ||
+              existingIssues.length > 0) &&
+            (hasInvalidUserId || freshData.userId === userId)
+          ) {
+            await deleteDoc(docRef);
+            await setDoc(docRef, {
+              ...mutableFields,
+              id: safeId,
+              userId,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+            knownCloudBookIds.add(safeId);
+            return;
+          }
+
+          console.error("[CloudSync] Book update rejected after inspection:", {
+            path,
+            existingIssues,
+            outgoingIssues,
+            existingUserId: freshData.userId,
+            currentUserId: userId,
+            existingKeys: Object.keys(freshData),
+          });
         } catch (recoveryErr) {
           handleFirestoreError(recoveryErr, OperationType.UPDATE, path);
         }

@@ -267,11 +267,8 @@ export function compressFootnotes(
  */
 export function sanitizeSafeImageRef(val: unknown, maxLen = 500000): string | undefined {
   if (typeof val !== "string") return undefined;
-  let trimmed = val.trim();
+  const trimmed = val.replace(/[\r\n]+/g, "").trim();
   if (!trimmed) return "";
-  if (trimmed.startsWith("data:image/")) {
-    trimmed = trimmed.replace(/[\r\n]+/g, "");
-  }
   if (trimmed.length > maxLen) return undefined;
   if (
     /^https?:\/\/.+$/.test(trimmed) ||
@@ -731,6 +728,231 @@ export function validateFirestoreDocumentSize(payload: Record<string, any>): Doc
     percentOfLimit,
     status,
   };
+}
+
+const VALID_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
+
+function isValidSafeImageRefClient(val: unknown, maxLen = 500000): boolean {
+  if (typeof val !== "string" || val.length > maxLen) return false;
+  return (
+    val === "" ||
+    /^https?:\/\/.+$/.test(val) ||
+    /^data:image\/(png|jpeg|jpg|webp|gif|svg\+xml);.+$/.test(val) ||
+    /^\/[^\s]+$/.test(val)
+  );
+}
+
+/**
+ * Checks a book payload against every constraint in firestore.rules `isValidBook`
+ * (excluding serverTimestamp fields which are validated on the server).
+ */
+export function findBookRuleViolations(
+  data: Record<string, any>,
+  bookId: string,
+  allowedKeys: Set<string>
+): string[] {
+  const issues: string[] = [];
+  if (!data || typeof data !== "object") {
+    return ["Payload is not an object"];
+  }
+
+  for (const k of Object.keys(data)) {
+    if (!allowedKeys.has(k)) {
+      issues.push(`Disallowed top-level key "${k}"`);
+    }
+  }
+
+  if (!VALID_ID_REGEX.test(String(data.id || "")) || data.id !== bookId) {
+    issues.push(`Invalid id "${String(data.id)}" vs "${bookId}"`);
+  }
+  if (!VALID_ID_REGEX.test(String(data.userId || ""))) {
+    issues.push(`Invalid userId "${String(data.userId)}"`);
+  }
+  if (typeof data.title !== "string" || data.title.length < 1 || data.title.length > 200) {
+    issues.push(`Invalid title length (${typeof data.title})`);
+  }
+  if ("subtitle" in data && (typeof data.subtitle !== "string" || data.subtitle.length > 300)) {
+    issues.push(`Invalid subtitle (${typeof data.subtitle})`);
+  }
+  if (typeof data.author !== "string" || data.author.length < 1 || data.author.length > 120) {
+    issues.push(`Invalid author (${typeof data.author})`);
+  }
+  if (typeof data.genre !== "string" || data.genre.length < 1 || data.genre.length > 80) {
+    issues.push(`Invalid genre (${typeof data.genre})`);
+  }
+  if ("tone" in data && (typeof data.tone !== "string" || data.tone.length > 240)) {
+    issues.push(`Invalid tone (${typeof data.tone})`);
+  }
+  if (typeof data.targetWordCount !== "number" || !Number.isFinite(data.targetWordCount) || data.targetWordCount < 0 || data.targetWordCount > 10000000) {
+    issues.push(`Invalid targetWordCount (${String(data.targetWordCount)})`);
+  }
+  if (typeof data.currentWordCount !== "number" || !Number.isFinite(data.currentWordCount) || data.currentWordCount < 0 || data.currentWordCount > 10000000) {
+    issues.push(`Invalid currentWordCount (${String(data.currentWordCount)})`);
+  }
+  if ("dailyWordCountGoal" in data && (typeof data.dailyWordCountGoal !== "number" || data.dailyWordCountGoal < 1 || data.dailyWordCountGoal > 1000000)) {
+    issues.push(`Invalid dailyWordCountGoal (${String(data.dailyWordCountGoal)})`);
+  }
+  if ("wordGoalMode" in data && data.wordGoalMode !== "project" && data.wordGoalMode !== "daily") {
+    issues.push(`Invalid wordGoalMode (${String(data.wordGoalMode)})`);
+  }
+  if ("dailyWordBaselineCount" in data && (typeof data.dailyWordBaselineCount !== "number" || data.dailyWordBaselineCount < 0 || data.dailyWordBaselineCount > 10000000)) {
+    issues.push(`Invalid dailyWordBaselineCount`);
+  }
+  if ("dailyWordBaselineDate" in data && (typeof data.dailyWordBaselineDate !== "string" || data.dailyWordBaselineDate.length > 20)) {
+    issues.push(`Invalid dailyWordBaselineDate`);
+  }
+  if ("premise" in data && (typeof data.premise !== "string" || data.premise.length > 8000)) {
+    issues.push(`Invalid premise`);
+  }
+  if ("targetAudience" in data && (typeof data.targetAudience !== "string" || data.targetAudience.length > 200)) {
+    issues.push(`Invalid targetAudience`);
+  }
+  if ("coverImageUrl" in data && !isValidSafeImageRefClient(data.coverImageUrl, 500000)) {
+    issues.push(`Invalid coverImageUrl`);
+  }
+  if ("coverImage" in data && !isValidSafeImageRefClient(data.coverImage, 500000)) {
+    issues.push(`Invalid coverImage`);
+  }
+  if ("frontCoverImage" in data && !isValidSafeImageRefClient(data.frontCoverImage, 500000)) {
+    issues.push(`Invalid frontCoverImage`);
+  }
+  if ("coverTitleFont" in data && (typeof data.coverTitleFont !== "string" || data.coverTitleFont.length > 80)) {
+    issues.push(`Invalid coverTitleFont`);
+  }
+  if ("coverAccentColor" in data && (typeof data.coverAccentColor !== "string" || data.coverAccentColor.length > 40)) {
+    issues.push(`Invalid coverAccentColor`);
+  }
+  if ("chapters" in data) {
+    if (!Array.isArray(data.chapters) || data.chapters.length > 300) {
+      issues.push(`Invalid chapters list`);
+    } else if (data.chapters.length > 0) {
+      const c0 = data.chapters[0];
+      if (
+        !c0 ||
+        typeof c0 !== "object" ||
+        typeof c0.id !== "string" ||
+        c0.id.length < 1 ||
+        c0.id.length > 128 ||
+        typeof c0.title !== "string" ||
+        c0.title.length > 500 ||
+        typeof c0.content !== "string" ||
+        c0.content.length > 1000000
+      ) {
+        issues.push(`Invalid chapters[0]`);
+      }
+    }
+  }
+  if ("mediaLibrary" in data) {
+    if (!Array.isArray(data.mediaLibrary) || data.mediaLibrary.length > 200) {
+      issues.push(`Invalid mediaLibrary list`);
+    } else if (data.mediaLibrary.length > 0) {
+      const m0 = data.mediaLibrary[0];
+      if (
+        !m0 ||
+        typeof m0 !== "object" ||
+        typeof m0.id !== "string" ||
+        m0.id.length < 1 ||
+        m0.id.length > 128 ||
+        typeof m0.title !== "string" ||
+        m0.title.length > 300 ||
+        !isValidSafeImageRefClient(m0.imageUrl, 500000)
+      ) {
+        issues.push(`Invalid mediaLibrary[0]`);
+      }
+    }
+  }
+  if ("loreEntries" in data) {
+    if (!Array.isArray(data.loreEntries) || data.loreEntries.length > 500) {
+      issues.push(`Invalid loreEntries list`);
+    } else if (data.loreEntries.length > 0) {
+      const l0 = data.loreEntries[0];
+      if (
+        !l0 ||
+        typeof l0 !== "object" ||
+        typeof l0.id !== "string" ||
+        l0.id.length < 1 ||
+        l0.id.length > 128 ||
+        typeof l0.name !== "string" ||
+        l0.name.length > 200 ||
+        typeof l0.category !== "string" ||
+        l0.category.length > 80
+      ) {
+        issues.push(`Invalid loreEntries[0]`);
+      }
+    }
+  }
+  if ("isOffloadedToDrive" in data && typeof data.isOffloadedToDrive !== "boolean") {
+    issues.push(`Invalid isOffloadedToDrive`);
+  }
+  if (data.isOffloadedToDrive !== true && "offloadMetadata" in data && data.offloadMetadata !== null) {
+    issues.push(`Invalid offloadMetadata while not offloaded`);
+  }
+
+  if ("formattingSettings" in data) {
+    const fs = data.formattingSettings;
+    const allowedFsKeys = new Set([
+      "trimSize", "fontPreset", "googleFontFamily", "fontColor", "fontSize", "fontSizePx",
+      "lineSpacing", "lineHeightValue", "letterSpacingEm", "paragraphIndentEm", "paragraphSpacingEm",
+      "textAlign", "chapterHeadingCase", "chapterWordBudget", "dropCaps", "dropCapSize",
+      "sceneBreakSymbol", "showPageNumbers", "runningHeaders", "includeFrontMatter", "includeBackMatter",
+      "dedicationText", "copyrightText", "authorBio", "newsletterLink", "acknowledgments",
+    ]);
+    if (!fs || typeof fs !== "object" || Array.isArray(fs)) {
+      issues.push("Invalid formattingSettings map");
+    } else {
+      for (const k of Object.keys(fs)) {
+        if (!allowedFsKeys.has(k)) issues.push(`Disallowed formattingSettings key "${k}"`);
+      }
+      if ("newsletterLink" in fs && (typeof fs.newsletterLink !== "string" || fs.newsletterLink.length > 512 || /^\s*(javascript|vbscript|data):/i.test(fs.newsletterLink))) {
+        issues.push("Invalid formattingSettings.newsletterLink");
+      }
+    }
+  }
+
+  if ("publishingKit" in data) {
+    const pk = data.publishingKit;
+    const allowedPkKeys = new Set([
+      "commercialTitle", "catchySubtitle", "salesBlurb", "amazonKeywords",
+      "bisacCategories", "compTitles", "targetAudience", "pricingRecommendations",
+      "marketingHook", "launchStrategy", "queryLetter", "printSpecs",
+      "isbn", "copyrightYear", "publisherImprint",
+    ]);
+    if (!pk || typeof pk !== "object" || Array.isArray(pk)) {
+      issues.push("Invalid publishingKit map");
+    } else {
+      for (const k of Object.keys(pk)) {
+        if (!allowedPkKeys.has(k)) issues.push(`Disallowed publishingKit key "${k}"`);
+      }
+      if ("amazonKeywords" in pk && (!Array.isArray(pk.amazonKeywords) || pk.amazonKeywords.length > 30 || (pk.amazonKeywords.length > 0 && (typeof pk.amazonKeywords[0] !== "string" || pk.amazonKeywords[0].length > 120)))) {
+        issues.push("Invalid publishingKit.amazonKeywords");
+      }
+      if ("bisacCategories" in pk && (!Array.isArray(pk.bisacCategories) || pk.bisacCategories.length > 20 || (pk.bisacCategories.length > 0 && (typeof pk.bisacCategories[0] !== "string" || pk.bisacCategories[0].length > 160)))) {
+        issues.push("Invalid publishingKit.bisacCategories");
+      }
+      if ("compTitles" in pk && (!Array.isArray(pk.compTitles) || pk.compTitles.length > 20 || (pk.compTitles.length > 0 && (typeof pk.compTitles[0] !== "string" || pk.compTitles[0].length > 200)))) {
+        issues.push("Invalid publishingKit.compTitles");
+      }
+    }
+  }
+
+  if ("originalityReport" in data) {
+    const rep = data.originalityReport;
+    const allowedRepKeys = new Set([
+      "score", "authorSharePercent", "copyrightStatus", "c2paManifestHash",
+      "humanBadgeRoyaltyTier", "badgeRoyaltyTier", "is100PercentOriginal",
+      "totalMicroRoyaltiesSubmitted", "taggedAuthors", "recentTransactions",
+      "breakdown", "analysisNotes", "lastAuditedAt",
+    ]);
+    if (!rep || typeof rep !== "object" || Array.isArray(rep)) {
+      issues.push("Invalid originalityReport map");
+    } else {
+      for (const k of Object.keys(rep)) {
+        if (!allowedRepKeys.has(k)) issues.push(`Disallowed originalityReport key "${k}"`);
+      }
+    }
+  }
+
+  return issues;
 }
 
 /**
