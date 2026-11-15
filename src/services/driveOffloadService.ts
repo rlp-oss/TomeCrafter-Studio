@@ -1,15 +1,20 @@
 import {
+  collection,
   doc,
   setDoc,
   updateDoc,
   getDoc,
+  getDocs,
   deleteDoc,
   deleteField,
+  query,
+  where,
   serverTimestamp,
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "./firebase";
+import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import {
   Book,
+  Chapter,
   FirestoreBookMetadataStub,
   OffloadMetadata,
   ChapterOutlineStub,
@@ -28,8 +33,11 @@ import {
   formatBytes,
   sanitizeSafeImageRef,
   findBookRuleViolations,
+  summarizeBookPayload,
   FIRESTORE_MAX_DOCUMENT_BYTES,
   FIRESTORE_SAFE_THRESHOLD_BYTES,
+  FIRESTORE_CHAPTER_SUBCOLLECTION_THRESHOLD_BYTES,
+  SUBCOLLECTION_STUB_VERSION,
 } from "./dataCompression";
 
 export interface OffloadDetectionResult {
@@ -135,20 +143,22 @@ async function persistBookRecord(
 
   let existsInCloud = knownCloudBookIds.has(safeId);
   let existingData: Record<string, any> | null = null;
+  let getDocOutcome = existsInCloud ? "known_in_session" : "not_checked";
   if (!existsInCloud) {
     try {
       const snap = await getDoc(docRef);
       existsInCloud = snap.exists();
+      getDocOutcome = existsInCloud ? "exists_true" : "exists_false";
       if (existsInCloud) {
         knownCloudBookIds.add(safeId);
         existingData = snap.data() as Record<string, any>;
       }
     } catch (err) {
-      // If getDoc fails due to not-found or permissions on non-existent doc, check safely
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("Missing or insufficient permissions")) {
         handleFirestoreError(err, OperationType.GET, path);
       }
+      getDocOutcome = `getDoc_denied(${msg})`;
       existsInCloud = false;
     }
   }
@@ -202,25 +212,43 @@ async function persistBookRecord(
       });
       knownCloudBookIds.add(safeId);
     } catch (err) {
+      const candidate = { ...mutableFields, id: safeId, userId };
       const localIssues = findBookRuleViolations(
-        { ...mutableFields, id: safeId, userId },
+        candidate,
         safeId,
         ALLOWED_FIRESTORE_BOOK_KEYS
       );
-      if (localIssues.length > 0) {
-        console.error("[CloudSync] Client schema violations on create:", localIssues);
-      }
-      handleFirestoreError(err, OperationType.CREATE, path);
+      const summary = summarizeBookPayload(candidate);
+      const baseMsg = err instanceof Error ? err.message : String(err);
+      const uidMatch = userId === auth.currentUser?.uid;
+      const enriched = new Error(
+        `${baseMsg} [phase=initial_create, uidMatch=${String(uidMatch)}, getDoc=${getDocOutcome}, bytes=${calculateByteSize(mutableFields)}, issues=${JSON.stringify(localIssues)}, summary=${JSON.stringify(summary)}]`
+      );
+      handleFirestoreError(enriched, OperationType.CREATE, path);
     }
   } else {
     try {
       await updateDoc(docRef, buildUpdatePayload(existingData));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      let diagContext = `phase=updateDoc, bytes=${calculateByteSize(mutableFields)}`;
+
       if (msg.includes("Missing or insufficient permissions")) {
+        let recoveryPhase = "getDoc";
+        let existingIssues: string[] = [];
+        let outgoingIssues: string[] = [];
+        let existingKeys: string[] = [];
+        let existingUserId: unknown = undefined;
+
         try {
           const freshSnap = await getDoc(docRef);
           if (!freshSnap.exists()) {
+            recoveryPhase = "setDoc_missing";
+            outgoingIssues = findBookRuleViolations(
+              { ...mutableFields, id: safeId, userId },
+              safeId,
+              ALLOWED_FIRESTORE_BOOK_KEYS
+            );
             await setDoc(docRef, {
               ...mutableFields,
               id: safeId,
@@ -233,25 +261,27 @@ async function persistBookRecord(
           }
 
           const freshData = freshSnap.data() as Record<string, any>;
-          const existingIssues = findBookRuleViolations(
+          existingKeys = Object.keys(freshData);
+          existingUserId = freshData.userId;
+          existingIssues = findBookRuleViolations(
             freshData,
             safeId,
             ALLOWED_FIRESTORE_BOOK_KEYS
           );
-          const hasUnknownLegacyKeys = Object.keys(freshData).some(
+          const hasUnknownLegacyKeys = existingKeys.some(
             (k) => !ALLOWED_FIRESTORE_BOOK_KEYS.has(k)
           );
           const hasMismatchedId = Boolean(freshData.id && freshData.id !== safeId);
           const hasInvalidUserId = !/^[a-zA-Z0-9_-]{1,128}$/.test(String(freshData.userId || ""));
 
           let retryFailed = false;
-          // Retry updateDoc with full freshData cleanup if we hadn't inspected freshData yet
           if (
             !hasUnknownLegacyKeys &&
             !hasMismatchedId &&
             !hasInvalidUserId &&
             existingData === null
           ) {
+            recoveryPhase = "updateDoc_retry";
             try {
               await updateDoc(docRef, buildUpdatePayload(freshData));
               return;
@@ -260,23 +290,21 @@ async function persistBookRecord(
             }
           }
 
-          const outgoingIssues = findBookRuleViolations(
-            { ...mutableFields, id: safeId, userId },
+          const candidate = { ...mutableFields, id: safeId, userId };
+          outgoingIssues = findBookRuleViolations(
+            candidate,
             safeId,
             ALLOWED_FIRESTORE_BOOK_KEYS
           );
 
           if (
             outgoingIssues.length === 0 &&
-            (retryFailed ||
-              existingData !== null ||
-              hasUnknownLegacyKeys ||
-              hasMismatchedId ||
-              hasInvalidUserId ||
-              existingIssues.length > 0) &&
+            (hasUnknownLegacyKeys || hasMismatchedId || hasInvalidUserId) &&
             (hasInvalidUserId || freshData.userId === userId)
           ) {
+            recoveryPhase = "deleteDoc";
             await deleteDoc(docRef);
+            recoveryPhase = "setDoc_replace";
             await setDoc(docRef, {
               ...mutableFields,
               id: safeId,
@@ -288,19 +316,18 @@ async function persistBookRecord(
             return;
           }
 
-          console.error("[CloudSync] Book update rejected after inspection:", {
-            path,
-            existingIssues,
-            outgoingIssues,
-            existingUserId: freshData.userId,
-            currentUserId: userId,
-            existingKeys: Object.keys(freshData),
-          });
+          diagContext = `phase=recovery_skipped, bytes=${calculateByteSize(mutableFields)}, retryFailed=${String(retryFailed)}, existingIssues=${JSON.stringify(existingIssues)}, outgoingIssues=${JSON.stringify(outgoingIssues)}, uidMatch=${String(existingUserId === userId)}, existingKeys=${JSON.stringify(existingKeys)}, summary=${JSON.stringify(summarizeBookPayload(candidate))}`;
         } catch (recoveryErr) {
-          handleFirestoreError(recoveryErr, OperationType.UPDATE, path);
+          const recMsg = recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr);
+          const candidateSummary = summarizeBookPayload({ ...mutableFields, id: safeId, userId });
+          const enriched = new Error(
+            `${recMsg} [phase=${recoveryPhase}, bytes=${calculateByteSize(mutableFields)}, existingIssues=${JSON.stringify(existingIssues)}, outgoingIssues=${JSON.stringify(outgoingIssues)}, uidMatch=${String(existingUserId === userId)}, existingKeys=${JSON.stringify(existingKeys)}, summary=${JSON.stringify(candidateSummary)}]`
+          );
+          handleFirestoreError(enriched, OperationType.UPDATE, path);
         }
       }
-      handleFirestoreError(err, OperationType.UPDATE, path);
+      const enriched = new Error(`${msg} [${diagContext}]`);
+      handleFirestoreError(enriched, OperationType.UPDATE, path);
     }
   }
 }
@@ -339,6 +366,212 @@ export function detectFirestoreOverflow(
   };
 }
 
+function buildChapterOutlinesFromChapters(chapters: Chapter[]): ChapterOutlineStub[] {
+  return (chapters || []).slice(0, 300).map((ch, idx) => ({
+    id: sanitizeBookId(ch.id || `chapter-${idx + 1}`),
+    number: ch.number || idx + 1,
+    act: (ch.act || "Act I").slice(0, 200),
+    title: (ch.title || `Chapter ${idx + 1}`).slice(0, 200),
+    summary: (ch.summary || "").slice(0, 1000),
+    goal: (ch.goal || "").slice(0, 500),
+    conflict: (ch.conflict || "").slice(0, 500),
+    cliffhanger: (ch.cliffhanger || "").slice(0, 500),
+    pov: (ch.pov || "Third Person Limited").slice(0, 200),
+    setting: (ch.setting || "").slice(0, 500),
+    targetWords: ch.targetWords || 2500,
+    wordCount: ch.wordCount || (ch.content ? ch.content.trim().split(/\s+/).filter(Boolean).length : 0),
+    status: ch.status || "draft",
+    hasIllustrations: Boolean(ch.illustrations && ch.illustrations.length > 0),
+    illustrationCount: ch.illustrations?.length || 0,
+    hasFootnotes: Boolean(ch.footnotes && ch.footnotes.length > 0),
+    footnoteCount: ch.footnotes?.length || 0,
+  }));
+}
+
+const CHAPTER_OPTIONAL_FIELDS = [
+  "act",
+  "summary",
+  "goal",
+  "conflict",
+  "cliffhanger",
+  "pov",
+  "setting",
+  "targetWords",
+  "wordCount",
+  "status",
+  "illustrations",
+  "notes",
+  "footnotes",
+] as const;
+
+function buildFirestoreChapterPayload(ch: Chapter, index: number): Record<string, any> {
+  const payload: Record<string, any> = {
+    number: Number.isFinite(Number(ch.number)) ? Math.max(0, Math.min(10000, Math.round(Number(ch.number)))) : index + 1,
+    act: String(ch.act || "Act I").slice(0, 200),
+    title: String(ch.title || `Chapter ${index + 1}`).slice(0, 500),
+    summary: String(ch.summary || "").slice(0, 8000),
+    goal: String(ch.goal || "").slice(0, 2000),
+    conflict: String(ch.conflict || "").slice(0, 2000),
+    cliffhanger: String(ch.cliffhanger || "").slice(0, 2000),
+    pov: String(ch.pov || "Third Person Limited").slice(0, 200),
+    setting: String(ch.setting || "").slice(0, 500),
+    targetWords: Number.isFinite(Number(ch.targetWords)) ? Math.max(0, Math.min(1000000, Math.round(Number(ch.targetWords)))) : 2500,
+    wordCount: Number.isFinite(Number(ch.wordCount)) ? Math.max(0, Math.min(1000000, Math.round(Number(ch.wordCount)))) : 0,
+    content: String(ch.content || "").slice(0, 1000000),
+    status: ch.status === "review" || ch.status === "polished" || ch.status === "final" ? ch.status : "draft",
+    illustrations: Array.isArray(ch.illustrations) ? ch.illustrations.slice(0, 50) : [],
+  };
+  if (typeof ch.notes === "string" && ch.notes.length > 0) {
+    payload.notes = ch.notes.slice(0, 8000);
+  }
+  if (Array.isArray(ch.footnotes) && ch.footnotes.length > 0) {
+    payload.footnotes = ch.footnotes.slice(0, 500);
+  }
+  return payload;
+}
+
+export async function fetchSubcollectionChapters(
+  bookId: string,
+  userId: string
+): Promise<Chapter[]> {
+  const safeBookId = sanitizeBookId(bookId);
+  const effectiveUid = userId || auth.currentUser?.uid || "";
+  if (!effectiveUid) return [];
+
+  const path = `books/${safeBookId}/chapters`;
+  try {
+    const q = query(collection(db, "books", safeBookId, "chapters"), where("userId", "==", effectiveUid));
+    const snap = await getDocs(q);
+    const chapters: Chapter[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data();
+      chapters.push({
+        id: d.id || docSnap.id,
+        number: typeof d.number === "number" ? d.number : chapters.length + 1,
+        act: d.act || "Act I",
+        title: d.title || `Chapter ${chapters.length + 1}`,
+        summary: d.summary || "",
+        goal: d.goal || "",
+        conflict: d.conflict || "",
+        cliffhanger: d.cliffhanger || "",
+        pov: d.pov || "Third Person Limited",
+        setting: d.setting || "",
+        targetWords: typeof d.targetWords === "number" ? d.targetWords : 2500,
+        wordCount: typeof d.wordCount === "number" ? d.wordCount : 0,
+        content: d.content || "",
+        status: d.status || "draft",
+        illustrations: Array.isArray(d.illustrations) ? d.illustrations : [],
+        notes: typeof d.notes === "string" ? d.notes : undefined,
+        footnotes: Array.isArray(d.footnotes) ? d.footnotes : [],
+      });
+    });
+    return chapters.sort((a, b) => a.number - b.number);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, path);
+  }
+}
+
+async function syncChaptersSubcollection(
+  bookId: string,
+  userId: string,
+  chapters: Chapter[]
+): Promise<void> {
+  const safeBookId = sanitizeBookId(bookId);
+  const collectionPath = `books/${safeBookId}/chapters`;
+  const existingMap = new Map<string, Record<string, any>>();
+
+  try {
+    const existingSnap = await getDocs(
+      query(collection(db, "books", safeBookId, "chapters"), where("userId", "==", userId))
+    );
+    existingSnap.forEach((docSnap) => {
+      existingMap.set(docSnap.id, docSnap.data() as Record<string, any>);
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, collectionPath);
+  }
+
+  const desiredIds = new Set<string>();
+
+  for (let i = 0; i < chapters.length; i++) {
+    const ch = chapters[i];
+    const safeChId = sanitizeBookId(ch.id || `chapter-${i + 1}`);
+    desiredIds.add(safeChId);
+    const chDocRef = doc(db, "books", safeBookId, "chapters", safeChId);
+    const chPath = `${collectionPath}/${safeChId}`;
+    const mutable = buildFirestoreChapterPayload(ch, i);
+    const existingData = existingMap.get(safeChId);
+
+    if (!existingData) {
+      try {
+        await setDoc(chDocRef, {
+          ...mutable,
+          id: safeChId,
+          bookId: safeBookId,
+          userId,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, chPath);
+      }
+    } else {
+      const updatePayload: Record<string, any> = {
+        ...mutable,
+        updatedAt: serverTimestamp(),
+      };
+      for (const optKey of CHAPTER_OPTIONAL_FIELDS) {
+        if (optKey in existingData && !(optKey in mutable)) {
+          updatePayload[optKey] = deleteField();
+        }
+      }
+      try {
+        await updateDoc(chDocRef, updatePayload);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, chPath);
+      }
+    }
+  }
+
+  for (const staleId of existingMap.keys()) {
+    if (!desiredIds.has(staleId)) {
+      const chPath = `${collectionPath}/${staleId}`;
+      try {
+        await deleteDoc(doc(db, "books", safeBookId, "chapters", staleId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, chPath);
+      }
+    }
+  }
+}
+
+export async function deleteBookChaptersSubcollection(
+  bookId: string,
+  userId: string
+): Promise<void> {
+  const safeBookId = sanitizeBookId(bookId);
+  const effectiveUid = userId || auth.currentUser?.uid || "";
+  if (!effectiveUid) return;
+
+  const collectionPath = `books/${safeBookId}/chapters`;
+  let snap;
+  try {
+    snap = await getDocs(
+      query(collection(db, "books", safeBookId, "chapters"), where("userId", "==", effectiveUid))
+    );
+  } catch {
+    return;
+  }
+
+  for (const docSnap of snap.docs) {
+    try {
+      await deleteDoc(doc(db, "books", safeBookId, "chapters", docSnap.id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `${collectionPath}/${docSnap.id}`);
+    }
+  }
+}
+
 /**
  * Builds a lean, queryable Metadata Stub to store in Firestore.
  */
@@ -349,25 +582,7 @@ export function createFirestoreMetadataStub(
   compressedSizeBytes: number,
   userId?: string
 ): FirestoreBookMetadataStub {
-  const chapterOutlines: ChapterOutlineStub[] = (book.chapters || []).slice(0, 300).map((ch, idx) => ({
-    id: ch.id || `chapter-${idx + 1}`,
-    number: ch.number || idx + 1,
-    act: ch.act || "Act I",
-    title: (ch.title || `Chapter ${idx + 1}`).slice(0, 200),
-    summary: ch.summary || "",
-    goal: ch.goal || "",
-    conflict: ch.conflict || "",
-    cliffhanger: ch.cliffhanger || "",
-    pov: ch.pov || "Third Person Limited",
-    setting: ch.setting || "",
-    targetWords: ch.targetWords || 2500,
-    wordCount: ch.wordCount || (ch.content ? ch.content.trim().split(/\s+/).filter(Boolean).length : 0),
-    status: ch.status || "draft",
-    hasIllustrations: Boolean(ch.illustrations && ch.illustrations.length > 0),
-    illustrationCount: ch.illustrations?.length || 0,
-    hasFootnotes: Boolean(ch.footnotes && ch.footnotes.length > 0),
-    footnoteCount: ch.footnotes?.length || 0,
-  }));
+  const chapterOutlines: ChapterOutlineStub[] = buildChapterOutlinesFromChapters(book.chapters || []);
 
   const loreSummaries: LoreSummaryStub[] = (book.loreEntries || []).slice(0, 500).map((lore) => ({
     id: lore.id,
@@ -475,6 +690,8 @@ export async function executeGoogleDriveOffload(
 
 /**
  * Unified Sync Engine: Compresses, validates < 1MB, and persists Book to Firestore.
+ * Automatically stores chapter prose in /books/{bookId}/chapters when a manuscript exceeds
+ * the single-document threshold so large multi-chapter books stay fast and well under Firestore limits.
  */
 export async function syncBookWithAutoDriveOffload(
   book: Book,
@@ -483,13 +700,66 @@ export async function syncBookWithAutoDriveOffload(
 ): Promise<OffloadExecutionResult> {
   const detection = detectFirestoreOverflow(book);
 
-  if (detection.shouldOffload || options?.forceDriveOffload) {
+  if (options?.forceDriveOffload) {
     return await executeGoogleDriveOffload(book, userId);
   }
 
   const compression = compressBookForFirestore(book);
-  const sizeValidation = validateFirestoreDocumentSize(compression.compressedBook);
+  const compressedChapters = Array.isArray(compression.compressedBook.chapters)
+    ? (compression.compressedBook.chapters as Chapter[])
+    : [];
 
+  if (
+    compressedChapters.length > 0 &&
+    compression.compressedBytes > FIRESTORE_CHAPTER_SUBCOLLECTION_THRESHOLD_BYTES
+  ) {
+    const parentCandidate: Record<string, any> = {
+      ...compression.compressedBook,
+      chapters: [],
+      chapterOutlines: buildChapterOutlinesFromChapters(compressedChapters),
+      _stubVersion: SUBCOLLECTION_STUB_VERSION,
+      isOffloadedToDrive: false,
+    };
+
+    const parentValidation = validateFirestoreDocumentSize(parentCandidate);
+    const maxChapterBytes = compressedChapters.reduce(
+      (max, ch, idx) => Math.max(max, calculateByteSize(buildFirestoreChapterPayload(ch, idx))),
+      0
+    );
+
+    if (
+      parentValidation.valid &&
+      parentValidation.sizeBytes < FIRESTORE_SAFE_THRESHOLD_BYTES &&
+      maxChapterBytes < FIRESTORE_SAFE_THRESHOLD_BYTES
+    ) {
+      await persistBookRecord(book.id, userId, parentCandidate);
+      await syncChaptersSubcollection(book.id, userId, compressedChapters);
+
+      if (isGoogleDriveAutoSyncEnabled()) {
+        saveBookArchiveToGoogleDrive(book).catch((driveErr) => {
+          console.warn("[CloudSync] Background Google Drive mirror skipped:", driveErr);
+        });
+      }
+
+      return {
+        success: true,
+        actionTaken: "saved_to_firestore",
+        originalSizeBytes: detection.rawSizeBytes,
+        originalSizeFormatted: detection.rawSizeFormatted,
+        stubSizeBytes: parentValidation.sizeBytes,
+        stubSizeFormatted: parentValidation.sizeFormatted,
+        message: `Book saved across parent metadata (${parentValidation.sizeFormatted}) and ${compressedChapters.length} chapter subcollection documents.`,
+      };
+    }
+
+    return await executeGoogleDriveOffload(book, userId);
+  }
+
+  if (detection.shouldOffload) {
+    return await executeGoogleDriveOffload(book, userId);
+  }
+
+  const sizeValidation = validateFirestoreDocumentSize(compression.compressedBook);
   if (!sizeValidation.valid) {
     return await executeGoogleDriveOffload(book, userId);
   }
@@ -497,7 +767,6 @@ export async function syncBookWithAutoDriveOffload(
   await persistBookRecord(book.id, userId, {
     ...compression.compressedBook,
     isOffloadedToDrive: false,
-    offloadMetadata: null,
   });
 
   if (isGoogleDriveAutoSyncEnabled()) {
@@ -518,9 +787,52 @@ export async function syncBookWithAutoDriveOffload(
 }
 
 /**
- * Hydrates a Firestore book document, resolving Google Drive offloaded archives if needed.
+ * Hydrates a Firestore book document, resolving subcollection chapters or Google Drive offloaded archives if needed.
  */
-export function hydrateBookData(bookId: string, data: Record<string, any>): Book {
+export function hydrateBookData(
+  bookId: string,
+  data: Record<string, any>,
+  subcollectionChapters?: Chapter[]
+): Book {
+  if (data._stubVersion === SUBCOLLECTION_STUB_VERSION && !data.isOffloadedToDrive) {
+    const baseBook = decompressBookFromFirestore(data);
+    if (Array.isArray(subcollectionChapters) && subcollectionChapters.length > 0) {
+      return {
+        ...baseBook,
+        chapters: subcollectionChapters,
+      };
+    }
+    if (Array.isArray(data.chapterOutlines) && data.chapterOutlines.length > 0) {
+      return {
+        ...baseBook,
+        chapters: data.chapterOutlines.map((co: ChapterOutlineStub, idx: number) => ({
+          id: co.id || `chapter-${idx + 1}`,
+          number: co.number || idx + 1,
+          act: co.act || "Act I",
+          title: co.title || `Chapter ${idx + 1}`,
+          summary: co.summary || "",
+          goal: co.goal || "",
+          conflict: co.conflict || "",
+          cliffhanger: co.cliffhanger || "",
+          pov: co.pov || "Third Person Limited",
+          setting: co.setting || "",
+          targetWords: co.targetWords || 2500,
+          wordCount: co.wordCount || 0,
+          content: "",
+          status: (
+            co.status === "complete"
+              ? "final"
+              : co.status === "in-progress"
+                ? "draft"
+                : co.status || "draft"
+          ) as "draft" | "review" | "polished" | "final",
+          illustrations: [],
+          footnotes: [],
+        })),
+      };
+    }
+    return baseBook;
+  }
   if (data.isOffloadedToDrive && data.offloadMetadata) {
     return {
       id: data.id || bookId,
@@ -665,6 +977,15 @@ export async function loadBookWithDriveResolution(
         isOffloaded: true,
       };
     }
+  }
+
+  if (data._stubVersion === SUBCOLLECTION_STUB_VERSION && !data.isOffloadedToDrive) {
+    const subChapters = await fetchSubcollectionChapters(safeId, data.userId || auth.currentUser?.uid || "");
+    return {
+      book: hydrateBookData(safeId, data, subChapters),
+      source: "firestore",
+      isOffloaded: false,
+    };
   }
 
   return {

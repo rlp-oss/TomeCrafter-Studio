@@ -22,6 +22,10 @@ import {
   Pencil,
   ArrowLeft,
   Save,
+  Cloud,
+  CloudOff,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { Book, Genre } from "../types";
 import { apiService } from "../services/api";
@@ -51,6 +55,13 @@ interface ProjectHubModalProps {
   initialTab?: "create" | "library";
   initialEditBookId?: string | null;
   authorDefaultName?: string;
+  isCloudAuthenticated?: boolean;
+  cloudSyncedIds?: Set<string>;
+  dirtyBookIds?: Set<string>;
+  syncErrorsByBookId?: Record<string, string>;
+  syncingBookIds?: Set<string>;
+  isSyncingCloud?: boolean;
+  onSyncBook?: (bookId: string) => Promise<void> | void;
 }
 
 const GENRE_PRESETS: { genre: Genre; desc: string; icon: string; accent: string }[] = [
@@ -101,6 +112,13 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   initialTab = "create",
   initialEditBookId = null,
   authorDefaultName = "Anonymous Author",
+  isCloudAuthenticated = false,
+  cloudSyncedIds,
+  dirtyBookIds,
+  syncErrorsByBookId,
+  syncingBookIds,
+  isSyncingCloud = false,
+  onSyncBook,
 }) => {
   const [activeTab, setActiveTab] = useState<"create" | "library">(initialTab);
 
@@ -800,6 +818,25 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                     const targetW = b.targetWordCount || 60000;
                     const progressPct = Math.min(100, Math.round((bookWords / targetW) * 100));
 
+                    const isSyncedInCloud = Boolean(cloudSyncedIds?.has(b.id));
+                    const isDirty = Boolean(dirtyBookIds?.has(b.id));
+                    const syncError = syncErrorsByBookId?.[b.id];
+                    const isSyncingThisBook = Boolean(syncingBookIds?.has(b.id)) || (isSyncingCloud && !isSyncedInCloud && !syncError);
+
+                    type CloudHealthState = "syncing" | "error" | "pending" | "local_only" | "synced";
+                    let cloudHealth: CloudHealthState = "local_only";
+                    if (isSyncingThisBook) {
+                      cloudHealth = "syncing";
+                    } else if (syncError) {
+                      cloudHealth = "error";
+                    } else if (!isCloudAuthenticated || !isSyncedInCloud) {
+                      cloudHealth = "local_only";
+                    } else if (isDirty) {
+                      cloudHealth = "pending";
+                    } else {
+                      cloudHealth = "synced";
+                    }
+
                     return (
                       <div
                         key={b.id}
@@ -829,13 +866,69 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                                   Active Project
                                 </span>
                               )}
+
+                              {cloudHealth === "synced" && (
+                                <span
+                                  className="inline-flex items-center space-x-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/35"
+                                  title="This project is backed up and up to date in Firebase Cloud."
+                                >
+                                  <Cloud className="w-3 h-3" />
+                                  <span>Synced</span>
+                                </span>
+                              )}
+                              {cloudHealth === "pending" && (
+                                <span
+                                  className="inline-flex items-center space-x-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/35"
+                                  title="Local edits have not been pushed to Firebase Cloud yet."
+                                >
+                                  <Clock className="w-3 h-3" />
+                                  <span>Sync Pending</span>
+                                </span>
+                              )}
+                              {cloudHealth === "syncing" && (
+                                <span
+                                  className="inline-flex items-center space-x-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/35"
+                                  title="Syncing this project to Firebase Cloud..."
+                                >
+                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                  <span>Syncing</span>
+                                </span>
+                              )}
+                              {cloudHealth === "error" && (
+                                <span
+                                  className="inline-flex items-center space-x-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-semibold"
+                                  title={syncError}
+                                >
+                                  <AlertCircle className="w-3 h-3" />
+                                  <span>Sync Failed</span>
+                                </span>
+                              )}
+                              {cloudHealth === "local_only" && (
+                                <span
+                                  className="inline-flex items-center space-x-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-stone-800/90 text-stone-300 border border-stone-600/80"
+                                  title={
+                                    isCloudAuthenticated
+                                      ? "Saved in this browser only; not yet synced to Firebase Cloud."
+                                      : "Saved in this browser only. Sign in to sync to Firebase Cloud."
+                                  }
+                                >
+                                  <CloudOff className="w-3 h-3 text-stone-400" />
+                                  <span>Local Only</span>
+                                </span>
+                              )}
                             </div>
 
                             <p className="text-xs text-stone-400 line-clamp-1 max-w-2xl">
                               {b.premise}
                             </p>
 
-                            <div className="flex items-center space-x-3 text-[11px] text-stone-400 pt-1 font-mono">
+                            {syncError && (
+                              <p className="text-[11px] text-rose-300/95 bg-rose-950/40 border border-rose-500/25 rounded-lg px-2.5 py-1 max-w-2xl line-clamp-2">
+                                Cloud sync error: {syncError}
+                              </p>
+                            )}
+
+                            <div className="flex items-center space-x-3 text-[11px] text-stone-400 pt-1 font-mono flex-wrap gap-y-1">
                               <span>By {b.author}</span>
                               <span>•</span>
                               <span>{b.chapters.length} {b.chapters.length === 1 ? "Chapter" : "Chapters"}</span>
@@ -859,6 +952,21 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
 
                           {/* Right: Actions */}
                           <div className="flex items-center space-x-2 shrink-0 flex-wrap gap-y-2">
+                            {isCloudAuthenticated && onSyncBook && cloudHealth !== "synced" && (
+                              <button
+                                onClick={() => void onSyncBook(b.id)}
+                                disabled={isSyncingThisBook}
+                                className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition-colors disabled:opacity-50 ${
+                                  cloudHealth === "error"
+                                    ? "bg-rose-500/15 hover:bg-rose-500/25 text-rose-200 border-rose-500/40"
+                                    : "bg-stone-800 hover:bg-emerald-500/20 text-stone-200 hover:text-emerald-300 border-stone-700 hover:border-emerald-500/40"
+                                }`}
+                                title={cloudHealth === "error" ? "Retry cloud sync" : "Sync this project to cloud now"}
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingThisBook ? "animate-spin" : ""}`} />
+                                <span>{cloudHealth === "error" ? "Retry Sync" : "Sync"}</span>
+                              </button>
+                            )}
                             {onEditBook && (
                               <button
                                 onClick={() => startEditingBook(b)}

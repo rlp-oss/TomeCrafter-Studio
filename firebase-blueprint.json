@@ -250,6 +250,100 @@
         }
       },
       "required": ["uid", "grantedAt"]
+    },
+    "chapter": {
+      "title": "Chapter",
+      "description": "Individual chapter document stored in /books/{bookId}/chapters subcollection for scalable large manuscripts",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "number": {
+          "type": "number"
+        },
+        "act": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "goal": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "conflict": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "cliffhanger": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "pov": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "setting": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "targetWords": {
+          "type": "number"
+        },
+        "wordCount": {
+          "type": "number"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 1000000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "review", "polished", "final"],
+          "maxLength": 20
+        },
+        "illustrations": {
+          "type": "array"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "footnotes": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "bookId", "userId", "number", "title", "content", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -260,6 +354,10 @@
     "/books/{bookId}": {
       "schema": "book",
       "description": "User-owned book manuscripts and studio project archives"
+    },
+    "/books/{bookId}/chapters/{chapterId}": {
+      "schema": "chapter",
+      "description": "User-owned chapter prose subcollection under each book document"
     },
     "/settings/{settingId}": {
       "schema": "studioSettings",

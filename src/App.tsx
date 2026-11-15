@@ -81,10 +81,52 @@ export default function App() {
   const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
   const [cloudSyncedIds, setCloudSyncedIds] = useState<Set<string>>(new Set());
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+  const [dirtyBookIds, setDirtyBookIds] = useState<Set<string>>(new Set());
+  const [syncErrorsByBookId, setSyncErrorsByBookId] = useState<Record<string, string>>({});
+  const [syncingBookIds, setSyncingBookIds] = useState<Set<string>>(new Set());
   const hasMigratedInitialLocalRef = useRef<string | null>(null);
   const booksRef = useRef<Book[]>([]);
   const dirtyBookIdsRef = useRef<Set<string>>(new Set());
   const isManualSavingRef = useRef<boolean>(false);
+
+  const markBookDirty = (bookId: string) => {
+    dirtyBookIdsRef.current.add(bookId);
+    setDirtyBookIds(new Set(dirtyBookIdsRef.current));
+  };
+
+  const clearBookDirty = (bookId: string) => {
+    dirtyBookIdsRef.current.delete(bookId);
+    setDirtyBookIds(new Set(dirtyBookIdsRef.current));
+  };
+
+  const clearAllDirtyBooks = () => {
+    dirtyBookIdsRef.current.clear();
+    setDirtyBookIds(new Set());
+  };
+
+  const recordBookSyncSuccess = (bookId: string) => {
+    clearBookDirty(bookId);
+    setCloudSyncedIds((prev) => {
+      const next = new Set(prev);
+      next.add(bookId);
+      return next;
+    });
+    setSyncErrorsByBookId((prev) => {
+      if (!(bookId in prev)) return prev;
+      const next = { ...prev };
+      delete next[bookId];
+      return next;
+    });
+  };
+
+  const recordBookSyncError = (bookId: string, err: unknown) => {
+    const readable = extractReadableSaveError(err);
+    setSyncErrorsByBookId((prev) => ({
+      ...prev,
+      [bookId]: readable,
+    }));
+    return readable;
+  };
 
   // Save & Auto-Save Control State (Auto-Save defaults to OFF)
   const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(() => {
@@ -230,6 +272,8 @@ export default function App() {
       } else {
         clearKnownCloudBooks();
         setCloudSyncedIds(new Set());
+        setSyncErrorsByBookId({});
+        setSyncingBookIds(new Set());
         hasMigratedInitialLocalRef.current = null;
       }
     });
@@ -256,15 +300,13 @@ export default function App() {
           if (cloudBooks.length === 0 && localBooks.length > 0) {
             setIsSyncingCloud(true);
             try {
-              await syncAllLocalBooksToCloud(localBooks, uid);
+              const res = await syncAllLocalBooksToCloud(localBooks, uid);
+              res.syncedIds.forEach((id) => recordBookSyncSuccess(id));
             } catch (err) {
               console.error("Initial cloud migration failed:", err);
-              if (err instanceof BatchCloudSyncError && err.syncedIds.length > 0) {
-                setCloudSyncedIds((prev) => {
-                  const next = new Set(prev);
-                  err.syncedIds.forEach((id) => next.add(id));
-                  return next;
-                });
+              if (err instanceof BatchCloudSyncError) {
+                err.syncedIds.forEach((id) => recordBookSyncSuccess(id));
+                err.failures.forEach((f) => recordBookSyncError(f.bookId, f.error));
               }
               setSaveStatus("error");
               showTemporaryNotice(
@@ -285,15 +327,13 @@ export default function App() {
             if (nonSampleLocal.length > 0) {
               setIsSyncingCloud(true);
               try {
-                await syncAllLocalBooksToCloud(nonSampleLocal, uid);
+                const res = await syncAllLocalBooksToCloud(nonSampleLocal, uid);
+                res.syncedIds.forEach((id) => recordBookSyncSuccess(id));
               } catch (err) {
                 console.error("Local draft cloud sync failed:", err);
-                if (err instanceof BatchCloudSyncError && err.syncedIds.length > 0) {
-                  setCloudSyncedIds((prev) => {
-                    const next = new Set(prev);
-                    err.syncedIds.forEach((id) => next.add(id));
-                    return next;
-                  });
+                if (err instanceof BatchCloudSyncError) {
+                  err.syncedIds.forEach((id) => recordBookSyncSuccess(id));
+                  err.failures.forEach((f) => recordBookSyncError(f.bookId, f.error));
                 }
                 setSaveStatus("error");
                 showTemporaryNotice(
@@ -369,17 +409,19 @@ export default function App() {
         for (const id of idsToSave) {
           const target = latestBooks.find((b) => b.id === id);
           if (!target) continue;
+          setSyncingBookIds((prev) => new Set(prev).add(id));
           try {
             await saveBookToFirestore(target, currentUser.uid);
-            dirtyBookIdsRef.current.delete(id);
-            setCloudSyncedIds((prev) => {
-              const next = new Set(prev);
-              next.add(target.id);
-              return next;
-            });
+            recordBookSyncSuccess(id);
           } catch (err) {
             console.error(`Failed saving book "${target.title}" (${id}) to cloud:`, err);
-            syncErrors.push(extractReadableSaveError(err));
+            syncErrors.push(recordBookSyncError(id, err));
+          } finally {
+            setSyncingBookIds((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
           }
         }
 
@@ -398,7 +440,7 @@ export default function App() {
         return;
       }
 
-      dirtyBookIdsRef.current.clear();
+      clearAllDirtyBooks();
       setLastSavedTime(formattedTime);
       setSaveStatus("saved");
       showTemporaryNotice("Changes saved locally.", "success");
@@ -457,29 +499,29 @@ export default function App() {
       if (isAuthReady && currentUser) {
         const active = booksRef.current.find((b) => b.id === activeBookId);
         if (active && dirtyBookIdsRef.current.has(active.id)) {
+          setSyncingBookIds((prev) => new Set(prev).add(active.id));
           try {
             await saveBookToFirestore(active, currentUser.uid);
-            dirtyBookIdsRef.current.delete(active.id);
-            setCloudSyncedIds((prev) => {
-              const next = new Set(prev);
-              next.add(active.id);
-              return next;
-            });
+            recordBookSyncSuccess(active.id);
             setLastSavedTime(formattedTime);
             setSaveStatus("saved");
           } catch (err) {
             console.error("Auto-save cloud sync failed:", err);
+            const readable = recordBookSyncError(active.id, err);
             setSaveStatus("error");
-            showTemporaryNotice(
-              `Auto-save cloud sync failed: ${extractReadableSaveError(err)}`,
-              "error"
-            );
+            showTemporaryNotice(`Auto-save cloud sync failed: ${readable}`, "error");
+          } finally {
+            setSyncingBookIds((prev) => {
+              const next = new Set(prev);
+              next.delete(active.id);
+              return next;
+            });
           }
           return;
         }
       }
 
-      dirtyBookIdsRef.current.clear();
+      clearAllDirtyBooks();
       setLastSavedTime(formattedTime);
       setSaveStatus("saved");
     }, 1500);
@@ -492,12 +534,8 @@ export default function App() {
     setIsSyncingCloud(true);
     try {
       const result = await syncAllLocalBooksToCloud(books, currentUser.uid);
-      setCloudSyncedIds((prev) => {
-        const next = new Set(prev);
-        result.syncedIds.forEach((id) => next.add(id));
-        return next;
-      });
-      dirtyBookIdsRef.current.clear();
+      result.syncedIds.forEach((id) => recordBookSyncSuccess(id));
+      clearAllDirtyBooks();
       setLastSavedTime(
         new Date().toLocaleTimeString([], {
           hour: "2-digit",
@@ -511,12 +549,9 @@ export default function App() {
         "success"
       );
     } catch (err) {
-      if (err instanceof BatchCloudSyncError && err.syncedIds.length > 0) {
-        setCloudSyncedIds((prev) => {
-          const next = new Set(prev);
-          err.syncedIds.forEach((id) => next.add(id));
-          return next;
-        });
+      if (err instanceof BatchCloudSyncError) {
+        err.syncedIds.forEach((id) => recordBookSyncSuccess(id));
+        err.failures.forEach((f) => recordBookSyncError(f.bookId, f.error));
       }
       setSaveStatus("error");
       const readableError = extractReadableSaveError(err);
@@ -527,11 +562,44 @@ export default function App() {
     }
   };
 
+  const handleSyncSingleBook = async (bookId: string) => {
+    if (!isAuthReady || !currentUser) return;
+    const target = booksRef.current.find((b) => b.id === bookId);
+    if (!target) return;
+
+    setSyncingBookIds((prev) => new Set(prev).add(bookId));
+    setSaveStatus("saving");
+    try {
+      await saveBookToFirestore(target, currentUser.uid);
+      recordBookSyncSuccess(bookId);
+      setLastSavedTime(
+        new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      );
+      setSaveStatus("saved");
+      showTemporaryNotice(`Synced "${target.title}" to Firebase Cloud.`, "success");
+    } catch (err) {
+      console.error(`Failed syncing book "${target.title}" (${bookId}):`, err);
+      const readable = recordBookSyncError(bookId, err);
+      setSaveStatus("error");
+      showTemporaryNotice(`Cloud sync failed for "${target.title}": ${readable}`, "error");
+    } finally {
+      setSyncingBookIds((prev) => {
+        const next = new Set(prev);
+        next.delete(bookId);
+        return next;
+      });
+    }
+  };
+
   const activeBook = books.find((b) => b.id === activeBookId) || books[0] || SAMPLE_BOOKS[0];
 
   // Update book handler (marks dirty; saves immediately only if auto-save is enabled)
   const handleUpdateBook = (updatedBook: Book) => {
-    dirtyBookIdsRef.current.add(updatedBook.id);
+    markBookDirty(updatedBook.id);
     setSaveStatus("unsaved");
     const todayKey = getLocalDateKey();
     const nowIso = new Date().toISOString();
@@ -635,7 +703,7 @@ export default function App() {
     const nextBooks = booksRef.current.map((b) => (b.id === bookId ? updatedBook : b));
     booksRef.current = nextBooks;
     setBooks(nextBooks);
-    dirtyBookIdsRef.current.add(bookId);
+    markBookDirty(bookId);
 
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(nextBooks));
@@ -651,24 +719,27 @@ export default function App() {
 
     if (isAuthReady && currentUser) {
       setSaveStatus("saving");
+      setSyncingBookIds((prev) => new Set(prev).add(bookId));
       try {
         await saveBookToFirestore(updatedBook, currentUser.uid);
-        dirtyBookIdsRef.current.delete(bookId);
-        setCloudSyncedIds((prev) => {
-          const next = new Set(prev);
-          next.add(bookId);
-          return next;
-        });
+        recordBookSyncSuccess(bookId);
         setLastSavedTime(formattedTime);
         setSaveStatus("saved");
         showTemporaryNotice(`Updated project "${cleanTitle}" and synced to cloud.`, "success");
       } catch (err) {
         console.error(`Failed syncing edited project "${cleanTitle}" (${bookId}):`, err);
+        const readable = recordBookSyncError(bookId, err);
         setSaveStatus("error");
         showTemporaryNotice(
-          `Project "${cleanTitle}" updated locally, but cloud sync failed: ${extractReadableSaveError(err)}`,
+          `Project "${cleanTitle}" updated locally, but cloud sync failed: ${readable}`,
           "error"
         );
+      } finally {
+        setSyncingBookIds((prev) => {
+          const next = new Set(prev);
+          next.delete(bookId);
+          return next;
+        });
       }
       return;
     }
@@ -779,6 +850,7 @@ export default function App() {
       }
       return next;
     });
+    markBookDirty(newBook.id);
     setActiveBookId(newBook.id);
     setActiveTab("outline");
     setShowLandingPage(false);
@@ -807,6 +879,7 @@ export default function App() {
       }
       return next;
     });
+    markBookDirty(duplicatedBook.id);
     setActiveBookId(duplicatedBook.id);
   };
 
@@ -839,6 +912,13 @@ export default function App() {
     if (activeBookId === targetId) {
       setActiveBookId(remaining[0].id);
     }
+    clearBookDirty(targetId);
+    setSyncErrorsByBookId((prev) => {
+      if (!(targetId in prev)) return prev;
+      const next = { ...prev };
+      delete next[targetId];
+      return next;
+    });
     setPendingDeleteBook(null);
 
     if (currentUser && cloudSyncedIds.has(targetId)) {
@@ -891,6 +971,13 @@ export default function App() {
           initialTab={projectModalTab}
           initialEditBookId={projectEditBookId}
           authorDefaultName={currentUser?.displayName || "Anonymous Author"}
+          isCloudAuthenticated={!!currentUser}
+          cloudSyncedIds={cloudSyncedIds}
+          dirtyBookIds={dirtyBookIds}
+          syncErrorsByBookId={syncErrorsByBookId}
+          syncingBookIds={syncingBookIds}
+          isSyncingCloud={isSyncingCloud}
+          onSyncBook={handleSyncSingleBook}
         />
 
         {/* User-Friendly Auth & Cloud Sync Modal */}
@@ -1167,6 +1254,13 @@ export default function App() {
         initialTab={projectModalTab}
         initialEditBookId={projectEditBookId}
         authorDefaultName={currentUser?.displayName || "Anonymous Author"}
+        isCloudAuthenticated={!!currentUser}
+        cloudSyncedIds={cloudSyncedIds}
+        dirtyBookIds={dirtyBookIds}
+        syncErrorsByBookId={syncErrorsByBookId}
+        syncingBookIds={syncingBookIds}
+        isSyncingCloud={isSyncingCloud}
+        onSyncBook={handleSyncSingleBook}
       />
 
       {/* User-Friendly Auth & Cloud Sync Modal */}

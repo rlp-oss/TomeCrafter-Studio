@@ -193,6 +193,9 @@ assert.match(rulesSource, /function isValidFormattingSettings\(/);
 assert.match(rulesSource, /function isValidPublishingKit\(/);
 assert.match(rulesSource, /function isValidOriginalityReport\(/);
 assert.match(rulesSource, /function isValidStudioLogo\(/);
+assert.match(rulesSource, /function isValidChapter\(/);
+assert.match(rulesSource, /function isParentBookOwner\(/);
+assert.match(rulesSource, /match \/chapters\/\{chapterId\}/);
 assert.match(rulesSource, /match \/admins\/\{adminId\}[\s\S]*allow list, create, update, delete:\s*if false;/);
 assert.match(rulesSource, /allow list:\s*if isVerifiedUser\(\)\s*&&\s*resource\.data\.userId\s*==\s*request\.auth\.uid;/);
 

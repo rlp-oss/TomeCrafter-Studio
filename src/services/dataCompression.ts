@@ -2,6 +2,8 @@ import { Book, Chapter, ChapterIllustration, FootnoteReference, LoreEntry } from
 
 export const FIRESTORE_MAX_DOCUMENT_BYTES = 1048576; // 1 MiB strict Firestore limit
 export const FIRESTORE_SAFE_THRESHOLD_BYTES = 800000; // 800 KB target threshold for safety
+export const FIRESTORE_CHAPTER_SUBCOLLECTION_THRESHOLD_BYTES = 180000; // Offload chapter prose into /books/{bookId}/chapters subcollection above 180 KB
+export const SUBCOLLECTION_STUB_VERSION = "subcollection-v1";
 
 export interface CompressionOptions {
   maxInlineIllustrationBytes?: number; // Max size for inline Base64 data URLs (default 24KB)
@@ -542,6 +544,7 @@ export function compressBookForFirestore(
 
   // 1. Minify Manuscript Chapters and Scenes
   let totalWordsInChapters = 0;
+  const VALID_CHAPTER_STATUSES = new Set(["draft", "review", "polished", "final"]);
   const processedChapters: Chapter[] = (rawCopy.chapters || []).slice(0, 300).map((ch, index) => {
     const minifiedContent = stripRedundantWhitespace(ch.content || "").slice(0, 1000000);
     const wordCount = minifiedContent
@@ -549,27 +552,52 @@ export function compressBookForFirestore(
       : 0;
     totalWordsInChapters += wordCount;
 
-    const safeChapterId = String(ch.id || `chapter-${index + 1}`).trim().slice(0, 128) || `chapter-${index + 1}`;
-    const safeChapterTitle = stripRedundantWhitespace(ch.title || `Chapter ${index + 1}`).slice(0, 500) || `Chapter ${index + 1}`;
+    const rawChId = String(ch.id || `chapter-${index + 1}`)
+      .replace(/[^a-zA-Z0-9_-]/g, "-")
+      .trim()
+      .slice(0, 128);
+    const safeChapterId = rawChId.length > 0 ? rawChId : `chapter-${index + 1}`;
+    const safeChapterTitle =
+      stripRedundantWhitespace(ch.title || `Chapter ${index + 1}`).slice(0, 500) ||
+      `Chapter ${index + 1}`;
+    const rawNum = Number(ch.number);
+    const safeNumber =
+      Number.isFinite(rawNum) && rawNum >= 0 ? Math.min(10000, Math.round(rawNum)) : index + 1;
+    const rawTarget = Number(ch.targetWords);
+    const safeTargetWords =
+      Number.isFinite(rawTarget) && rawTarget >= 0 ? Math.min(1000000, Math.round(rawTarget)) : 2500;
+    const safeStatus = VALID_CHAPTER_STATUSES.has(String(ch.status))
+      ? (ch.status as Chapter["status"])
+      : "draft";
+    const safeFootnotes = compressFootnotes(ch.footnotes, maxFootnoteAlternativesToKeep);
 
     return {
       id: safeChapterId,
-      number: ch.number || index + 1,
-      act: stripRedundantWhitespace(ch.act || "Act I"),
+      number: safeNumber,
+      act: stripRedundantWhitespace(ch.act || "Act I").slice(0, 200),
       title: safeChapterTitle,
-      summary: stripRedundantWhitespace(ch.summary || ""),
-      goal: stripRedundantWhitespace(ch.goal || ""),
-      conflict: stripRedundantWhitespace(ch.conflict || ""),
-      cliffhanger: stripRedundantWhitespace(ch.cliffhanger || ""),
-      pov: stripRedundantWhitespace(ch.pov || "Third Person Limited"),
-      setting: stripRedundantWhitespace(ch.setting || ""),
-      targetWords: ch.targetWords || 2500,
-      wordCount,
+      summary: stripRedundantWhitespace(ch.summary || "").slice(0, 8000),
+      goal: stripRedundantWhitespace(ch.goal || "").slice(0, 2000),
+      conflict: stripRedundantWhitespace(ch.conflict || "").slice(0, 2000),
+      cliffhanger: stripRedundantWhitespace(ch.cliffhanger || "").slice(0, 2000),
+      pov: stripRedundantWhitespace(ch.pov || "Third Person Limited").slice(0, 200),
+      setting: stripRedundantWhitespace(ch.setting || "").slice(0, 500),
+      targetWords: safeTargetWords,
+      wordCount: Math.max(0, Math.min(1000000, wordCount)),
       content: minifiedContent,
-      status: ch.status || "draft",
-      illustrations: ch.illustrations || [],
-      notes: ch.notes ? stripRedundantWhitespace(ch.notes) : undefined,
-      footnotes: compressFootnotes(ch.footnotes, maxFootnoteAlternativesToKeep),
+      status: safeStatus,
+      illustrations: (ch.illustrations || []).slice(0, 50).map((ill, illIdx) => ({
+        ...ill,
+        id:
+          String(ill.id || `ill-${illIdx + 1}`)
+            .replace(/[^a-zA-Z0-9_-]/g, "-")
+            .trim()
+            .slice(0, 128) || `ill-${illIdx + 1}`,
+        title: stripRedundantWhitespace(ill.title || `Chapter ${safeNumber} Illustration`).slice(0, 300) || `Chapter ${safeNumber} Illustration`,
+        imageUrl: sanitizeSafeImageRef(ill.imageUrl, 500000) ?? "",
+      })),
+      notes: ch.notes ? stripRedundantWhitespace(ch.notes).slice(0, 8000) : undefined,
+      footnotes: safeFootnotes ? safeFootnotes.slice(0, 500) : undefined,
     };
   });
   optimizationsApplied.push("Minified chapter prose and stripped redundant multiline whitespace");
@@ -742,6 +770,19 @@ function isValidSafeImageRefClient(val: unknown, maxLen = 500000): boolean {
   );
 }
 
+function isValidSafeLinkClient(val: unknown, maxLen = 512): boolean {
+  if (typeof val !== "string" || val.length > maxLen) return false;
+  return !/^\s*(javascript|vbscript|data):.*$/i.test(val);
+}
+
+function isValidFiniteRange(val: unknown, min: number, max: number): boolean {
+  return typeof val === "number" && Number.isFinite(val) && val >= min && val <= max;
+}
+
+function isValidStringLen(val: unknown, min: number, max: number): boolean {
+  return typeof val === "string" && val.length >= min && val.length <= max;
+}
+
 /**
  * Checks a book payload against every constraint in firestore.rules `isValidBook`
  * (excluding serverTimestamp fields which are validated on the server).
@@ -768,43 +809,43 @@ export function findBookRuleViolations(
   if (!VALID_ID_REGEX.test(String(data.userId || ""))) {
     issues.push(`Invalid userId "${String(data.userId)}"`);
   }
-  if (typeof data.title !== "string" || data.title.length < 1 || data.title.length > 200) {
-    issues.push(`Invalid title length (${typeof data.title})`);
+  if (!isValidStringLen(data.title, 1, 200)) {
+    issues.push(`Invalid title (${typeof data.title}, len=${String(data.title || "").length})`);
   }
-  if ("subtitle" in data && (typeof data.subtitle !== "string" || data.subtitle.length > 300)) {
+  if ("subtitle" in data && !isValidStringLen(data.subtitle, 0, 300)) {
     issues.push(`Invalid subtitle (${typeof data.subtitle})`);
   }
-  if (typeof data.author !== "string" || data.author.length < 1 || data.author.length > 120) {
+  if (!isValidStringLen(data.author, 1, 120)) {
     issues.push(`Invalid author (${typeof data.author})`);
   }
-  if (typeof data.genre !== "string" || data.genre.length < 1 || data.genre.length > 80) {
+  if (!isValidStringLen(data.genre, 1, 80)) {
     issues.push(`Invalid genre (${typeof data.genre})`);
   }
-  if ("tone" in data && (typeof data.tone !== "string" || data.tone.length > 240)) {
+  if ("tone" in data && !isValidStringLen(data.tone, 0, 240)) {
     issues.push(`Invalid tone (${typeof data.tone})`);
   }
-  if (typeof data.targetWordCount !== "number" || !Number.isFinite(data.targetWordCount) || data.targetWordCount < 0 || data.targetWordCount > 10000000) {
+  if (!isValidFiniteRange(data.targetWordCount, 0, 10000000)) {
     issues.push(`Invalid targetWordCount (${String(data.targetWordCount)})`);
   }
-  if (typeof data.currentWordCount !== "number" || !Number.isFinite(data.currentWordCount) || data.currentWordCount < 0 || data.currentWordCount > 10000000) {
+  if (!isValidFiniteRange(data.currentWordCount, 0, 10000000)) {
     issues.push(`Invalid currentWordCount (${String(data.currentWordCount)})`);
   }
-  if ("dailyWordCountGoal" in data && (typeof data.dailyWordCountGoal !== "number" || data.dailyWordCountGoal < 1 || data.dailyWordCountGoal > 1000000)) {
+  if ("dailyWordCountGoal" in data && !isValidFiniteRange(data.dailyWordCountGoal, 1, 1000000)) {
     issues.push(`Invalid dailyWordCountGoal (${String(data.dailyWordCountGoal)})`);
   }
   if ("wordGoalMode" in data && data.wordGoalMode !== "project" && data.wordGoalMode !== "daily") {
     issues.push(`Invalid wordGoalMode (${String(data.wordGoalMode)})`);
   }
-  if ("dailyWordBaselineCount" in data && (typeof data.dailyWordBaselineCount !== "number" || data.dailyWordBaselineCount < 0 || data.dailyWordBaselineCount > 10000000)) {
+  if ("dailyWordBaselineCount" in data && !isValidFiniteRange(data.dailyWordBaselineCount, 0, 10000000)) {
     issues.push(`Invalid dailyWordBaselineCount`);
   }
-  if ("dailyWordBaselineDate" in data && (typeof data.dailyWordBaselineDate !== "string" || data.dailyWordBaselineDate.length > 20)) {
+  if ("dailyWordBaselineDate" in data && !isValidStringLen(data.dailyWordBaselineDate, 0, 20)) {
     issues.push(`Invalid dailyWordBaselineDate`);
   }
-  if ("premise" in data && (typeof data.premise !== "string" || data.premise.length > 8000)) {
+  if ("premise" in data && !isValidStringLen(data.premise, 0, 8000)) {
     issues.push(`Invalid premise`);
   }
-  if ("targetAudience" in data && (typeof data.targetAudience !== "string" || data.targetAudience.length > 200)) {
+  if ("targetAudience" in data && !isValidStringLen(data.targetAudience, 0, 200)) {
     issues.push(`Invalid targetAudience`);
   }
   if ("coverImageUrl" in data && !isValidSafeImageRefClient(data.coverImageUrl, 500000)) {
@@ -816,10 +857,10 @@ export function findBookRuleViolations(
   if ("frontCoverImage" in data && !isValidSafeImageRefClient(data.frontCoverImage, 500000)) {
     issues.push(`Invalid frontCoverImage`);
   }
-  if ("coverTitleFont" in data && (typeof data.coverTitleFont !== "string" || data.coverTitleFont.length > 80)) {
+  if ("coverTitleFont" in data && !isValidStringLen(data.coverTitleFont, 0, 80)) {
     issues.push(`Invalid coverTitleFont`);
   }
-  if ("coverAccentColor" in data && (typeof data.coverAccentColor !== "string" || data.coverAccentColor.length > 40)) {
+  if ("coverAccentColor" in data && !isValidStringLen(data.coverAccentColor, 0, 40)) {
     issues.push(`Invalid coverAccentColor`);
   }
   if ("chapters" in data) {
@@ -830,13 +871,10 @@ export function findBookRuleViolations(
       if (
         !c0 ||
         typeof c0 !== "object" ||
-        typeof c0.id !== "string" ||
-        c0.id.length < 1 ||
-        c0.id.length > 128 ||
-        typeof c0.title !== "string" ||
-        c0.title.length > 500 ||
-        typeof c0.content !== "string" ||
-        c0.content.length > 1000000
+        Array.isArray(c0) ||
+        !isValidStringLen(c0.id, 1, 128) ||
+        !isValidStringLen(c0.title, 0, 500) ||
+        !isValidStringLen(c0.content, 0, 1000000)
       ) {
         issues.push(`Invalid chapters[0]`);
       }
@@ -850,11 +888,9 @@ export function findBookRuleViolations(
       if (
         !m0 ||
         typeof m0 !== "object" ||
-        typeof m0.id !== "string" ||
-        m0.id.length < 1 ||
-        m0.id.length > 128 ||
-        typeof m0.title !== "string" ||
-        m0.title.length > 300 ||
+        Array.isArray(m0) ||
+        !isValidStringLen(m0.id, 1, 128) ||
+        !isValidStringLen(m0.title, 0, 300) ||
         !isValidSafeImageRefClient(m0.imageUrl, 500000)
       ) {
         issues.push(`Invalid mediaLibrary[0]`);
@@ -869,13 +905,10 @@ export function findBookRuleViolations(
       if (
         !l0 ||
         typeof l0 !== "object" ||
-        typeof l0.id !== "string" ||
-        l0.id.length < 1 ||
-        l0.id.length > 128 ||
-        typeof l0.name !== "string" ||
-        l0.name.length > 200 ||
-        typeof l0.category !== "string" ||
-        l0.category.length > 80
+        Array.isArray(l0) ||
+        !isValidStringLen(l0.id, 1, 128) ||
+        !isValidStringLen(l0.name, 0, 200) ||
+        !isValidStringLen(l0.category, 0, 80)
       ) {
         issues.push(`Invalid loreEntries[0]`);
       }
@@ -884,7 +917,39 @@ export function findBookRuleViolations(
   if ("isOffloadedToDrive" in data && typeof data.isOffloadedToDrive !== "boolean") {
     issues.push(`Invalid isOffloadedToDrive`);
   }
-  if (data.isOffloadedToDrive !== true && "offloadMetadata" in data && data.offloadMetadata !== null) {
+  if (data.isOffloadedToDrive === true) {
+    const meta = data.offloadMetadata;
+    const reqMetaKeys = [
+      "driveFileId", "driveFileName", "offloadedAt",
+      "originalSizeBytes", "originalSizeFormatted",
+      "compressedSizeBytes", "compressedSizeFormatted",
+      "chapterCount", "loreCount", "reason",
+    ];
+    const allowedMetaKeys = new Set([...reqMetaKeys, "driveWebViewLink"]);
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+      issues.push("Missing or invalid offloadMetadata map");
+    } else {
+      for (const rk of reqMetaKeys) {
+        if (!(rk in meta)) issues.push(`Missing offloadMetadata.${rk}`);
+      }
+      for (const mk of Object.keys(meta)) {
+        if (!allowedMetaKeys.has(mk)) issues.push(`Disallowed offloadMetadata.${mk}`);
+      }
+      if (!isValidStringLen(meta.driveFileId, 1, 256)) issues.push("Invalid offloadMetadata.driveFileId");
+      if ("driveWebViewLink" in meta && meta.driveWebViewLink !== "" && (!isValidStringLen(meta.driveWebViewLink, 8, 1024) || !/^https?:\/\/.+$/.test(meta.driveWebViewLink))) {
+        issues.push("Invalid offloadMetadata.driveWebViewLink");
+      }
+      if (!isValidStringLen(meta.driveFileName, 1, 256)) issues.push("Invalid offloadMetadata.driveFileName");
+      if (!isValidStringLen(meta.offloadedAt, 1, 64)) issues.push("Invalid offloadMetadata.offloadedAt");
+      if (!isValidFiniteRange(meta.originalSizeBytes, 0, 1000000000)) issues.push("Invalid offloadMetadata.originalSizeBytes");
+      if (!isValidStringLen(meta.originalSizeFormatted, 0, 40)) issues.push("Invalid offloadMetadata.originalSizeFormatted");
+      if (!isValidFiniteRange(meta.compressedSizeBytes, 0, 1000000000)) issues.push("Invalid offloadMetadata.compressedSizeBytes");
+      if (!isValidStringLen(meta.compressedSizeFormatted, 0, 40)) issues.push("Invalid offloadMetadata.compressedSizeFormatted");
+      if (!isValidFiniteRange(meta.chapterCount, 0, 1000)) issues.push("Invalid offloadMetadata.chapterCount");
+      if (!isValidFiniteRange(meta.loreCount, 0, 2000)) issues.push("Invalid offloadMetadata.loreCount");
+      if (!isValidStringLen(meta.reason, 0, 500)) issues.push("Invalid offloadMetadata.reason");
+    }
+  } else if ("offloadMetadata" in data && data.offloadMetadata !== null) {
     issues.push(`Invalid offloadMetadata while not offloaded`);
   }
 
@@ -903,9 +968,32 @@ export function findBookRuleViolations(
       for (const k of Object.keys(fs)) {
         if (!allowedFsKeys.has(k)) issues.push(`Disallowed formattingSettings key "${k}"`);
       }
-      if ("newsletterLink" in fs && (typeof fs.newsletterLink !== "string" || fs.newsletterLink.length > 512 || /^\s*(javascript|vbscript|data):/i.test(fs.newsletterLink))) {
-        issues.push("Invalid formattingSettings.newsletterLink");
-      }
+      if ("trimSize" in fs && !isValidStringLen(fs.trimSize, 0, 32)) issues.push("Invalid formattingSettings.trimSize");
+      if ("fontPreset" in fs && !isValidStringLen(fs.fontPreset, 0, 64)) issues.push("Invalid formattingSettings.fontPreset");
+      if ("googleFontFamily" in fs && !isValidStringLen(fs.googleFontFamily, 0, 120)) issues.push("Invalid formattingSettings.googleFontFamily");
+      if ("fontColor" in fs && !isValidStringLen(fs.fontColor, 0, 40)) issues.push("Invalid formattingSettings.fontColor");
+      if ("fontSize" in fs && !isValidStringLen(fs.fontSize, 0, 24)) issues.push("Invalid formattingSettings.fontSize");
+      if ("fontSizePx" in fs && !isValidFiniteRange(fs.fontSizePx, 6, 72)) issues.push("Invalid formattingSettings.fontSizePx");
+      if ("lineSpacing" in fs && !isValidStringLen(fs.lineSpacing, 0, 24)) issues.push("Invalid formattingSettings.lineSpacing");
+      if ("lineHeightValue" in fs && !isValidFiniteRange(fs.lineHeightValue, 0.5, 5)) issues.push("Invalid formattingSettings.lineHeightValue");
+      if ("letterSpacingEm" in fs && !isValidFiniteRange(fs.letterSpacingEm, -0.5, 2)) issues.push("Invalid formattingSettings.letterSpacingEm");
+      if ("paragraphIndentEm" in fs && !isValidFiniteRange(fs.paragraphIndentEm, 0, 10)) issues.push("Invalid formattingSettings.paragraphIndentEm");
+      if ("paragraphSpacingEm" in fs && !isValidFiniteRange(fs.paragraphSpacingEm, 0, 10)) issues.push("Invalid formattingSettings.paragraphSpacingEm");
+      if ("textAlign" in fs && !isValidStringLen(fs.textAlign, 0, 24)) issues.push("Invalid formattingSettings.textAlign");
+      if ("chapterHeadingCase" in fs && !isValidStringLen(fs.chapterHeadingCase, 0, 32)) issues.push("Invalid formattingSettings.chapterHeadingCase");
+      if ("chapterWordBudget" in fs && !isValidFiniteRange(fs.chapterWordBudget, 0, 500000)) issues.push("Invalid formattingSettings.chapterWordBudget");
+      if ("dropCaps" in fs && typeof fs.dropCaps !== "boolean") issues.push("Invalid formattingSettings.dropCaps");
+      if ("dropCapSize" in fs && !isValidFiniteRange(fs.dropCapSize, 1, 20)) issues.push("Invalid formattingSettings.dropCapSize");
+      if ("sceneBreakSymbol" in fs && !isValidStringLen(fs.sceneBreakSymbol, 0, 40)) issues.push("Invalid formattingSettings.sceneBreakSymbol");
+      if ("showPageNumbers" in fs && typeof fs.showPageNumbers !== "boolean") issues.push("Invalid formattingSettings.showPageNumbers");
+      if ("runningHeaders" in fs && typeof fs.runningHeaders !== "boolean") issues.push("Invalid formattingSettings.runningHeaders");
+      if ("includeFrontMatter" in fs && typeof fs.includeFrontMatter !== "boolean") issues.push("Invalid formattingSettings.includeFrontMatter");
+      if ("includeBackMatter" in fs && typeof fs.includeBackMatter !== "boolean") issues.push("Invalid formattingSettings.includeBackMatter");
+      if ("dedicationText" in fs && !isValidStringLen(fs.dedicationText, 0, 2000)) issues.push("Invalid formattingSettings.dedicationText");
+      if ("copyrightText" in fs && !isValidStringLen(fs.copyrightText, 0, 2000)) issues.push("Invalid formattingSettings.copyrightText");
+      if ("authorBio" in fs && !isValidStringLen(fs.authorBio, 0, 4000)) issues.push("Invalid formattingSettings.authorBio");
+      if ("newsletterLink" in fs && !isValidSafeLinkClient(fs.newsletterLink, 512)) issues.push("Invalid formattingSettings.newsletterLink");
+      if ("acknowledgments" in fs && !isValidStringLen(fs.acknowledgments, 0, 4000)) issues.push("Invalid formattingSettings.acknowledgments");
     }
   }
 
@@ -923,15 +1011,79 @@ export function findBookRuleViolations(
       for (const k of Object.keys(pk)) {
         if (!allowedPkKeys.has(k)) issues.push(`Disallowed publishingKit key "${k}"`);
       }
-      if ("amazonKeywords" in pk && (!Array.isArray(pk.amazonKeywords) || pk.amazonKeywords.length > 30 || (pk.amazonKeywords.length > 0 && (typeof pk.amazonKeywords[0] !== "string" || pk.amazonKeywords[0].length > 120)))) {
+      if ("commercialTitle" in pk && !isValidStringLen(pk.commercialTitle, 0, 240)) issues.push("Invalid publishingKit.commercialTitle");
+      if ("catchySubtitle" in pk && !isValidStringLen(pk.catchySubtitle, 0, 300)) issues.push("Invalid publishingKit.catchySubtitle");
+      if ("salesBlurb" in pk) {
+        const sb = pk.salesBlurb;
+        if (!sb || typeof sb !== "object" || Array.isArray(sb)) {
+          issues.push("Invalid publishingKit.salesBlurb");
+        } else {
+          for (const sk of Object.keys(sb)) {
+            if (!["hook", "body", "callToAction"].includes(sk)) issues.push(`Disallowed publishingKit.salesBlurb.${sk}`);
+          }
+          if ("hook" in sb && !isValidStringLen(sb.hook, 0, 500)) issues.push("Invalid publishingKit.salesBlurb.hook");
+          if ("body" in sb && !isValidStringLen(sb.body, 0, 4000)) issues.push("Invalid publishingKit.salesBlurb.body");
+          if ("callToAction" in sb && !isValidStringLen(sb.callToAction, 0, 500)) issues.push("Invalid publishingKit.salesBlurb.callToAction");
+        }
+      }
+      if ("amazonKeywords" in pk && (!Array.isArray(pk.amazonKeywords) || pk.amazonKeywords.length > 30 || (pk.amazonKeywords.length > 0 && !isValidStringLen(pk.amazonKeywords[0], 0, 120)))) {
         issues.push("Invalid publishingKit.amazonKeywords");
       }
-      if ("bisacCategories" in pk && (!Array.isArray(pk.bisacCategories) || pk.bisacCategories.length > 20 || (pk.bisacCategories.length > 0 && (typeof pk.bisacCategories[0] !== "string" || pk.bisacCategories[0].length > 160)))) {
+      if ("bisacCategories" in pk && (!Array.isArray(pk.bisacCategories) || pk.bisacCategories.length > 20 || (pk.bisacCategories.length > 0 && !isValidStringLen(pk.bisacCategories[0], 0, 160)))) {
         issues.push("Invalid publishingKit.bisacCategories");
       }
-      if ("compTitles" in pk && (!Array.isArray(pk.compTitles) || pk.compTitles.length > 20 || (pk.compTitles.length > 0 && (typeof pk.compTitles[0] !== "string" || pk.compTitles[0].length > 200)))) {
+      if ("compTitles" in pk && (!Array.isArray(pk.compTitles) || pk.compTitles.length > 20 || (pk.compTitles.length > 0 && !isValidStringLen(pk.compTitles[0], 0, 200)))) {
         issues.push("Invalid publishingKit.compTitles");
       }
+      if ("targetAudience" in pk && !isValidStringLen(pk.targetAudience, 0, 500)) issues.push("Invalid publishingKit.targetAudience");
+      if ("pricingRecommendations" in pk) {
+        const pr = pk.pricingRecommendations;
+        if (!pr || typeof pr !== "object" || Array.isArray(pr)) {
+          issues.push("Invalid publishingKit.pricingRecommendations");
+        } else {
+          for (const rk of Object.keys(pr)) {
+            if (!["ebook", "paperback", "hardcover"].includes(rk)) issues.push(`Disallowed publishingKit.pricingRecommendations.${rk}`);
+          }
+          if ("ebook" in pr && !isValidFiniteRange(pr.ebook, 0, 10000)) issues.push("Invalid publishingKit.pricingRecommendations.ebook");
+          if ("paperback" in pr && !isValidFiniteRange(pr.paperback, 0, 10000)) issues.push("Invalid publishingKit.pricingRecommendations.paperback");
+          if ("hardcover" in pr && !isValidFiniteRange(pr.hardcover, 0, 10000)) issues.push("Invalid publishingKit.pricingRecommendations.hardcover");
+        }
+      }
+      if ("marketingHook" in pk && !isValidStringLen(pk.marketingHook, 0, 1000)) issues.push("Invalid publishingKit.marketingHook");
+      if ("launchStrategy" in pk && !isValidStringLen(pk.launchStrategy, 0, 10000)) issues.push("Invalid publishingKit.launchStrategy");
+      if ("queryLetter" in pk && !isValidStringLen(pk.queryLetter, 0, 12000)) issues.push("Invalid publishingKit.queryLetter");
+      if ("printSpecs" in pk) {
+        const ps = pk.printSpecs;
+        if (!ps || typeof ps !== "object" || Array.isArray(ps)) {
+          issues.push("Invalid publishingKit.printSpecs");
+        } else {
+          for (const psk of Object.keys(ps)) {
+            if (!["recommendedTrimSize", "estimatedPageCount", "spineWidthInches", "margins"].includes(psk)) {
+              issues.push(`Disallowed publishingKit.printSpecs.${psk}`);
+            }
+          }
+          if ("recommendedTrimSize" in ps && !isValidStringLen(ps.recommendedTrimSize, 0, 80)) issues.push("Invalid publishingKit.printSpecs.recommendedTrimSize");
+          if ("estimatedPageCount" in ps && !isValidFiniteRange(ps.estimatedPageCount, 0, 50000)) issues.push("Invalid publishingKit.printSpecs.estimatedPageCount");
+          if ("spineWidthInches" in ps && !isValidFiniteRange(ps.spineWidthInches, 0, 20)) issues.push("Invalid publishingKit.printSpecs.spineWidthInches");
+          if ("margins" in ps) {
+            const m = ps.margins;
+            if (!m || typeof m !== "object" || Array.isArray(m)) {
+              issues.push("Invalid publishingKit.printSpecs.margins");
+            } else {
+              for (const mk of Object.keys(m)) {
+                if (!["insideGutter", "outside", "top", "bottom"].includes(mk)) issues.push(`Disallowed publishingKit.printSpecs.margins.${mk}`);
+              }
+              if ("insideGutter" in m && !isValidStringLen(m.insideGutter, 0, 32)) issues.push("Invalid margins.insideGutter");
+              if ("outside" in m && !isValidStringLen(m.outside, 0, 32)) issues.push("Invalid margins.outside");
+              if ("top" in m && !isValidStringLen(m.top, 0, 32)) issues.push("Invalid margins.top");
+              if ("bottom" in m && !isValidStringLen(m.bottom, 0, 32)) issues.push("Invalid margins.bottom");
+            }
+          }
+        }
+      }
+      if ("isbn" in pk && !isValidStringLen(pk.isbn, 0, 40)) issues.push("Invalid publishingKit.isbn");
+      if ("copyrightYear" in pk && !isValidStringLen(pk.copyrightYear, 0, 16)) issues.push("Invalid publishingKit.copyrightYear");
+      if ("publisherImprint" in pk && !isValidStringLen(pk.publisherImprint, 0, 160)) issues.push("Invalid publishingKit.publisherImprint");
     }
   }
 
@@ -949,10 +1101,85 @@ export function findBookRuleViolations(
       for (const k of Object.keys(rep)) {
         if (!allowedRepKeys.has(k)) issues.push(`Disallowed originalityReport key "${k}"`);
       }
+      if ("score" in rep && !isValidFiniteRange(rep.score, 0, 100)) issues.push("Invalid originalityReport.score");
+      if ("authorSharePercent" in rep && !isValidFiniteRange(rep.authorSharePercent, 0, 100)) issues.push("Invalid originalityReport.authorSharePercent");
+      if ("copyrightStatus" in rep && !isValidStringLen(rep.copyrightStatus, 0, 160)) issues.push("Invalid originalityReport.copyrightStatus");
+      if ("c2paManifestHash" in rep && !isValidStringLen(rep.c2paManifestHash, 0, 256)) issues.push("Invalid originalityReport.c2paManifestHash");
+      if ("humanBadgeRoyaltyTier" in rep && !isValidStringLen(rep.humanBadgeRoyaltyTier, 0, 160)) issues.push("Invalid originalityReport.humanBadgeRoyaltyTier");
+      if ("badgeRoyaltyTier" in rep && !isValidStringLen(rep.badgeRoyaltyTier, 0, 160)) issues.push("Invalid originalityReport.badgeRoyaltyTier");
+      if ("is100PercentOriginal" in rep && typeof rep.is100PercentOriginal !== "boolean") issues.push("Invalid originalityReport.is100PercentOriginal");
+      if ("totalMicroRoyaltiesSubmitted" in rep && !isValidFiniteRange(rep.totalMicroRoyaltiesSubmitted, 0, 1000000000)) issues.push("Invalid originalityReport.totalMicroRoyaltiesSubmitted");
+      if ("taggedAuthors" in rep && (!Array.isArray(rep.taggedAuthors) || rep.taggedAuthors.length > 100 || (rep.taggedAuthors.length > 0 && (!rep.taggedAuthors[0] || typeof rep.taggedAuthors[0] !== "object" || Array.isArray(rep.taggedAuthors[0]))))) {
+        issues.push("Invalid originalityReport.taggedAuthors");
+      }
+      if ("recentTransactions" in rep && (!Array.isArray(rep.recentTransactions) || rep.recentTransactions.length > 50 || (rep.recentTransactions.length > 0 && (!rep.recentTransactions[0] || typeof rep.recentTransactions[0] !== "object" || Array.isArray(rep.recentTransactions[0]))))) {
+        issues.push("Invalid originalityReport.recentTransactions");
+      }
+      if ("breakdown" in rep) {
+        const bd = rep.breakdown;
+        if (!bd || typeof bd !== "object" || Array.isArray(bd)) {
+          issues.push("Invalid originalityReport.breakdown");
+        } else {
+          for (const bk of Object.keys(bd)) {
+            if (!["originalHumanVoice", "aiSynthesisNovelty", "stylisticHomageSimilarity", "referencedTextPercent"].includes(bk)) {
+              issues.push(`Disallowed originalityReport.breakdown.${bk}`);
+            }
+          }
+          if ("originalHumanVoice" in bd && !isValidFiniteRange(bd.originalHumanVoice, 0, 100)) issues.push("Invalid breakdown.originalHumanVoice");
+          if ("aiSynthesisNovelty" in bd && !isValidFiniteRange(bd.aiSynthesisNovelty, 0, 100)) issues.push("Invalid breakdown.aiSynthesisNovelty");
+          if ("stylisticHomageSimilarity" in bd && !isValidFiniteRange(bd.stylisticHomageSimilarity, 0, 100)) issues.push("Invalid breakdown.stylisticHomageSimilarity");
+          if ("referencedTextPercent" in bd && !isValidFiniteRange(bd.referencedTextPercent, 0, 100)) issues.push("Invalid breakdown.referencedTextPercent");
+        }
+      }
+      if ("analysisNotes" in rep && !isValidStringLen(rep.analysisNotes, 0, 4000)) issues.push("Invalid originalityReport.analysisNotes");
+      if ("lastAuditedAt" in rep && !isValidStringLen(rep.lastAuditedAt, 0, 64)) issues.push("Invalid originalityReport.lastAuditedAt");
     }
   }
 
+  if ("chapterOutlines" in data) {
+    if (!Array.isArray(data.chapterOutlines) || data.chapterOutlines.length > 300) {
+      issues.push("Invalid chapterOutlines");
+    } else if (data.chapterOutlines.length > 0) {
+      const co0 = data.chapterOutlines[0];
+      if (!co0 || typeof co0 !== "object" || Array.isArray(co0) || !isValidStringLen(co0.id, 1, 128) || !("number" in co0) || !("title" in co0)) {
+        issues.push("Invalid chapterOutlines[0]");
+      }
+    }
+  }
+
+  if ("loreSummaries" in data) {
+    if (!Array.isArray(data.loreSummaries) || data.loreSummaries.length > 500) {
+      issues.push("Invalid loreSummaries");
+    } else if (data.loreSummaries.length > 0) {
+      const ls0 = data.loreSummaries[0];
+      if (!ls0 || typeof ls0 !== "object" || Array.isArray(ls0) || !isValidStringLen(ls0.id, 1, 128) || !("name" in ls0) || !("category" in ls0)) {
+        issues.push("Invalid loreSummaries[0]");
+      }
+    }
+  }
+
+  if ("_stubVersion" in data && !isValidStringLen(data._stubVersion, 0, 40)) {
+    issues.push("Invalid _stubVersion");
+  }
+
   return issues;
+}
+
+export function summarizeBookPayload(data: Record<string, any>): Record<string, any> {
+  if (!data || typeof data !== "object") return { type: typeof data };
+  const chapters = Array.isArray(data.chapters) ? data.chapters : [];
+  return {
+    keys: Object.keys(data),
+    chaptersCount: chapters.length,
+    ch0IdLen: typeof chapters[0]?.id === "string" ? chapters[0].id.length : typeof chapters[0]?.id,
+    ch0ContentLen: typeof chapters[0]?.content === "string" ? chapters[0].content.length : typeof chapters[0]?.content,
+    mediaCount: Array.isArray(data.mediaLibrary) ? data.mediaLibrary.length : typeof data.mediaLibrary,
+    loreCount: Array.isArray(data.loreEntries) ? data.loreEntries.length : typeof data.loreEntries,
+    coverLen: typeof data.coverImageUrl === "string" ? data.coverImageUrl.length : typeof data.coverImageUrl,
+    pkKeys: data.publishingKit && typeof data.publishingKit === "object" ? Object.keys(data.publishingKit) : typeof data.publishingKit,
+    fsKeys: data.formattingSettings && typeof data.formattingSettings === "object" ? Object.keys(data.formattingSettings) : typeof data.formattingSettings,
+    repKeys: data.originalityReport && typeof data.originalityReport === "object" ? Object.keys(data.originalityReport) : typeof data.originalityReport,
+  };
 }
 
 /**

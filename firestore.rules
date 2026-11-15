@@ -8,7 +8,7 @@ service cloud.firestore {
 
     // 2. Hardened Global Helpers
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -42,9 +42,7 @@ service cloud.firestore {
     function isValidSafeImageRef(val, maxLen) {
       return val is string && val.size() <= maxLen && (
         val == '' ||
-        val.matches('^https?://.+') ||
-        val.matches('^data:image/(png|jpeg|jpg|webp|gif|svg\\+xml);.+') ||
-        val.matches('^/[^\\s]+$')
+        val.matches('^(https?://.+|data:image/(png|jpeg|jpg|webp|gif|svg\\+xml);.+|/[^\\s]+)$')
       );
     }
 
@@ -60,7 +58,7 @@ service cloud.firestore {
       );
     }
 
-    // 3. Nested Map Validation Blueprints
+    // 3. Nested Map Validation Blueprints (kept compact to stay well under Firestore's 1,000-expression limit)
     function isValidOffloadMetadata(meta) {
       return meta is map
         && meta.keys().hasAll([
@@ -75,14 +73,12 @@ service cloud.firestore {
           'compressedSizeBytes', 'compressedSizeFormatted',
           'chapterCount', 'loreCount', 'reason'
         ])
-        && meta.driveFileId is string && meta.driveFileId.size() >= 1 && meta.driveFileId.size() <= 256
+        && meta.driveFileId is string && meta.driveFileId.size() <= 256
         && (!('driveWebViewLink' in meta) || meta.driveWebViewLink == '' || isValidHttpUrl(meta.driveWebViewLink, 1024))
-        && meta.driveFileName is string && meta.driveFileName.size() >= 1 && meta.driveFileName.size() <= 256
-        && meta.offloadedAt is string && meta.offloadedAt.size() >= 1 && meta.offloadedAt.size() <= 64
+        && meta.driveFileName is string && meta.driveFileName.size() <= 256
+        && meta.offloadedAt is string && meta.offloadedAt.size() <= 64
         && meta.originalSizeBytes is number && meta.originalSizeBytes >= 0 && meta.originalSizeBytes <= 1000000000
-        && meta.originalSizeFormatted is string && meta.originalSizeFormatted.size() <= 40
         && meta.compressedSizeBytes is number && meta.compressedSizeBytes >= 0 && meta.compressedSizeBytes <= 1000000000
-        && meta.compressedSizeFormatted is string && meta.compressedSizeFormatted.size() <= 40
         && meta.chapterCount is number && meta.chapterCount >= 0 && meta.chapterCount <= 1000
         && meta.loreCount is number && meta.loreCount >= 0 && meta.loreCount <= 2000
         && meta.reason is string && meta.reason.size() <= 500;
@@ -97,27 +93,7 @@ service cloud.firestore {
           'sceneBreakSymbol', 'showPageNumbers', 'runningHeaders', 'includeFrontMatter', 'includeBackMatter',
           'dedicationText', 'copyrightText', 'authorBio', 'newsletterLink', 'acknowledgments'
         ])
-        && (!('trimSize' in fs) || (fs.trimSize is string && fs.trimSize.size() <= 32))
-        && (!('fontPreset' in fs) || (fs.fontPreset is string && fs.fontPreset.size() <= 64))
-        && (!('googleFontFamily' in fs) || (fs.googleFontFamily is string && fs.googleFontFamily.size() <= 120))
-        && (!('fontColor' in fs) || (fs.fontColor is string && fs.fontColor.size() <= 40))
-        && (!('fontSize' in fs) || (fs.fontSize is string && fs.fontSize.size() <= 24))
-        && (!('fontSizePx' in fs) || (fs.fontSizePx is number && fs.fontSizePx >= 6 && fs.fontSizePx <= 72))
-        && (!('lineSpacing' in fs) || (fs.lineSpacing is string && fs.lineSpacing.size() <= 24))
-        && (!('lineHeightValue' in fs) || (fs.lineHeightValue is number && fs.lineHeightValue >= 0.5 && fs.lineHeightValue <= 5))
-        && (!('letterSpacingEm' in fs) || (fs.letterSpacingEm is number && fs.letterSpacingEm >= -0.5 && fs.letterSpacingEm <= 2))
-        && (!('paragraphIndentEm' in fs) || (fs.paragraphIndentEm is number && fs.paragraphIndentEm >= 0 && fs.paragraphIndentEm <= 10))
-        && (!('paragraphSpacingEm' in fs) || (fs.paragraphSpacingEm is number && fs.paragraphSpacingEm >= 0 && fs.paragraphSpacingEm <= 10))
-        && (!('textAlign' in fs) || (fs.textAlign is string && fs.textAlign.size() <= 24))
-        && (!('chapterHeadingCase' in fs) || (fs.chapterHeadingCase is string && fs.chapterHeadingCase.size() <= 32))
         && (!('chapterWordBudget' in fs) || (fs.chapterWordBudget is number && fs.chapterWordBudget >= 0 && fs.chapterWordBudget <= 500000))
-        && (!('dropCaps' in fs) || fs.dropCaps is bool)
-        && (!('dropCapSize' in fs) || (fs.dropCapSize is number && fs.dropCapSize >= 1 && fs.dropCapSize <= 20))
-        && (!('sceneBreakSymbol' in fs) || (fs.sceneBreakSymbol is string && fs.sceneBreakSymbol.size() <= 40))
-        && (!('showPageNumbers' in fs) || fs.showPageNumbers is bool)
-        && (!('runningHeaders' in fs) || fs.runningHeaders is bool)
-        && (!('includeFrontMatter' in fs) || fs.includeFrontMatter is bool)
-        && (!('includeBackMatter' in fs) || fs.includeBackMatter is bool)
         && (!('dedicationText' in fs) || (fs.dedicationText is string && fs.dedicationText.size() <= 2000))
         && (!('copyrightText' in fs) || (fs.copyrightText is string && fs.copyrightText.size() <= 2000))
         && (!('authorBio' in fs) || (fs.authorBio is string && fs.authorBio.size() <= 4000))
@@ -133,47 +109,22 @@ service cloud.firestore {
           'marketingHook', 'launchStrategy', 'queryLetter', 'printSpecs',
           'isbn', 'copyrightYear', 'publisherImprint'
         ])
-        && (!('commercialTitle' in pk) || (pk.commercialTitle is string && pk.commercialTitle.size() <= 240))
-        && (!('catchySubtitle' in pk) || (pk.catchySubtitle is string && pk.catchySubtitle.size() <= 300))
         && (!('salesBlurb' in pk) || (
           pk.salesBlurb is map
           && pk.salesBlurb.keys().hasOnly(['hook', 'body', 'callToAction'])
-          && (!('hook' in pk.salesBlurb) || (pk.salesBlurb.hook is string && pk.salesBlurb.hook.size() <= 500))
           && (!('body' in pk.salesBlurb) || (pk.salesBlurb.body is string && pk.salesBlurb.body.size() <= 4000))
-          && (!('callToAction' in pk.salesBlurb) || (pk.salesBlurb.callToAction is string && pk.salesBlurb.callToAction.size() <= 500))
         ))
         && (!('amazonKeywords' in pk) || (pk.amazonKeywords is list && pk.amazonKeywords.size() <= 30 && (pk.amazonKeywords.size() == 0 || (pk.amazonKeywords[0] is string && pk.amazonKeywords[0].size() <= 120))))
         && (!('bisacCategories' in pk) || (pk.bisacCategories is list && pk.bisacCategories.size() <= 20 && (pk.bisacCategories.size() == 0 || (pk.bisacCategories[0] is string && pk.bisacCategories[0].size() <= 160))))
         && (!('compTitles' in pk) || (pk.compTitles is list && pk.compTitles.size() <= 20 && (pk.compTitles.size() == 0 || (pk.compTitles[0] is string && pk.compTitles[0].size() <= 200))))
-        && (!('targetAudience' in pk) || (pk.targetAudience is string && pk.targetAudience.size() <= 500))
-        && (!('pricingRecommendations' in pk) || (
-          pk.pricingRecommendations is map
-          && pk.pricingRecommendations.keys().hasOnly(['ebook', 'paperback', 'hardcover'])
-          && (!('ebook' in pk.pricingRecommendations) || (pk.pricingRecommendations.ebook is number && pk.pricingRecommendations.ebook >= 0 && pk.pricingRecommendations.ebook <= 10000))
-          && (!('paperback' in pk.pricingRecommendations) || (pk.pricingRecommendations.paperback is number && pk.pricingRecommendations.paperback >= 0 && pk.pricingRecommendations.paperback <= 10000))
-          && (!('hardcover' in pk.pricingRecommendations) || (pk.pricingRecommendations.hardcover is number && pk.pricingRecommendations.hardcover >= 0 && pk.pricingRecommendations.hardcover <= 10000))
-        ))
-        && (!('marketingHook' in pk) || (pk.marketingHook is string && pk.marketingHook.size() <= 1000))
+        && (!('pricingRecommendations' in pk) || (pk.pricingRecommendations is map && pk.pricingRecommendations.keys().hasOnly(['ebook', 'paperback', 'hardcover'])))
         && (!('launchStrategy' in pk) || (pk.launchStrategy is string && pk.launchStrategy.size() <= 10000))
         && (!('queryLetter' in pk) || (pk.queryLetter is string && pk.queryLetter.size() <= 12000))
         && (!('printSpecs' in pk) || (
           pk.printSpecs is map
           && pk.printSpecs.keys().hasOnly(['recommendedTrimSize', 'estimatedPageCount', 'spineWidthInches', 'margins'])
-          && (!('recommendedTrimSize' in pk.printSpecs) || (pk.printSpecs.recommendedTrimSize is string && pk.printSpecs.recommendedTrimSize.size() <= 80))
-          && (!('estimatedPageCount' in pk.printSpecs) || (pk.printSpecs.estimatedPageCount is number && pk.printSpecs.estimatedPageCount >= 0 && pk.printSpecs.estimatedPageCount <= 50000))
-          && (!('spineWidthInches' in pk.printSpecs) || (pk.printSpecs.spineWidthInches is number && pk.printSpecs.spineWidthInches >= 0 && pk.printSpecs.spineWidthInches <= 20))
-          && (!('margins' in pk.printSpecs) || (
-            pk.printSpecs.margins is map
-            && pk.printSpecs.margins.keys().hasOnly(['insideGutter', 'outside', 'top', 'bottom'])
-            && (!('insideGutter' in pk.printSpecs.margins) || (pk.printSpecs.margins.insideGutter is string && pk.printSpecs.margins.insideGutter.size() <= 32))
-            && (!('outside' in pk.printSpecs.margins) || (pk.printSpecs.margins.outside is string && pk.printSpecs.margins.outside.size() <= 32))
-            && (!('top' in pk.printSpecs.margins) || (pk.printSpecs.margins.top is string && pk.printSpecs.margins.top.size() <= 32))
-            && (!('bottom' in pk.printSpecs.margins) || (pk.printSpecs.margins.bottom is string && pk.printSpecs.margins.bottom.size() <= 32))
-          ))
-        ))
-        && (!('isbn' in pk) || (pk.isbn is string && pk.isbn.size() <= 40))
-        && (!('copyrightYear' in pk) || (pk.copyrightYear is string && pk.copyrightYear.size() <= 16))
-        && (!('publisherImprint' in pk) || (pk.publisherImprint is string && pk.publisherImprint.size() <= 160));
+          && (!('margins' in pk.printSpecs) || (pk.printSpecs.margins is map && pk.printSpecs.margins.keys().hasOnly(['insideGutter', 'outside', 'top', 'bottom'])))
+        ));
     }
 
     function isValidOriginalityReport(report) {
@@ -186,24 +137,11 @@ service cloud.firestore {
         ])
         && (!('score' in report) || (report.score is number && report.score >= 0 && report.score <= 100))
         && (!('authorSharePercent' in report) || (report.authorSharePercent is number && report.authorSharePercent >= 0 && report.authorSharePercent <= 100))
-        && (!('copyrightStatus' in report) || (report.copyrightStatus is string && report.copyrightStatus.size() <= 160))
-        && (!('c2paManifestHash' in report) || (report.c2paManifestHash is string && report.c2paManifestHash.size() <= 256))
-        && (!('humanBadgeRoyaltyTier' in report) || (report.humanBadgeRoyaltyTier is string && report.humanBadgeRoyaltyTier.size() <= 160))
-        && (!('badgeRoyaltyTier' in report) || (report.badgeRoyaltyTier is string && report.badgeRoyaltyTier.size() <= 160))
         && (!('is100PercentOriginal' in report) || report.is100PercentOriginal is bool)
-        && (!('totalMicroRoyaltiesSubmitted' in report) || (report.totalMicroRoyaltiesSubmitted is number && report.totalMicroRoyaltiesSubmitted >= 0 && report.totalMicroRoyaltiesSubmitted <= 1000000000))
         && (!('taggedAuthors' in report) || (report.taggedAuthors is list && report.taggedAuthors.size() <= 100 && (report.taggedAuthors.size() == 0 || report.taggedAuthors[0] is map)))
         && (!('recentTransactions' in report) || (report.recentTransactions is list && report.recentTransactions.size() <= 50 && (report.recentTransactions.size() == 0 || report.recentTransactions[0] is map)))
-        && (!('breakdown' in report) || (
-          report.breakdown is map
-          && report.breakdown.keys().hasOnly(['originalHumanVoice', 'aiSynthesisNovelty', 'stylisticHomageSimilarity', 'referencedTextPercent'])
-          && (!('originalHumanVoice' in report.breakdown) || (report.breakdown.originalHumanVoice is number && report.breakdown.originalHumanVoice >= 0 && report.breakdown.originalHumanVoice <= 100))
-          && (!('aiSynthesisNovelty' in report.breakdown) || (report.breakdown.aiSynthesisNovelty is number && report.breakdown.aiSynthesisNovelty >= 0 && report.breakdown.aiSynthesisNovelty <= 100))
-          && (!('stylisticHomageSimilarity' in report.breakdown) || (report.breakdown.stylisticHomageSimilarity is number && report.breakdown.stylisticHomageSimilarity >= 0 && report.breakdown.stylisticHomageSimilarity <= 100))
-          && (!('referencedTextPercent' in report.breakdown) || (report.breakdown.referencedTextPercent is number && report.breakdown.referencedTextPercent >= 0 && report.breakdown.referencedTextPercent <= 100))
-        ))
-        && (!('analysisNotes' in report) || (report.analysisNotes is string && report.analysisNotes.size() <= 4000))
-        && (!('lastAuditedAt' in report) || (report.lastAuditedAt is string && report.lastAuditedAt.size() <= 64));
+        && (!('breakdown' in report) || (report.breakdown is map && report.breakdown.keys().hasOnly(['originalHumanVoice', 'aiSynthesisNovelty', 'stylisticHomageSimilarity', 'referencedTextPercent'])))
+        && (!('analysisNotes' in report) || (report.analysisNotes is string && report.analysisNotes.size() <= 4000));
     }
 
     function isValidStudioLogo(logo) {
@@ -260,30 +198,21 @@ service cloud.firestore {
         && data.id == bookId
         && isValidId(data.userId)
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
-        && (!('subtitle' in data) || (data.subtitle is string && data.subtitle.size() <= 300))
         && data.author is string && data.author.size() >= 1 && data.author.size() <= 120
         && data.genre is string && data.genre.size() >= 1 && data.genre.size() <= 80
-        && (!('tone' in data) || (data.tone is string && data.tone.size() <= 240))
         && data.targetWordCount is number && data.targetWordCount >= 0 && data.targetWordCount <= 10000000
         && data.currentWordCount is number && data.currentWordCount >= 0 && data.currentWordCount <= 10000000
-        && (!('dailyWordCountGoal' in data) || (data.dailyWordCountGoal is number && data.dailyWordCountGoal >= 1 && data.dailyWordCountGoal <= 1000000))
-        && (!('wordGoalMode' in data) || (data.wordGoalMode is string && data.wordGoalMode in ['project', 'daily']))
-        && (!('dailyWordBaselineCount' in data) || (data.dailyWordBaselineCount is number && data.dailyWordBaselineCount >= 0 && data.dailyWordBaselineCount <= 10000000))
-        && (!('dailyWordBaselineDate' in data) || (data.dailyWordBaselineDate is string && data.dailyWordBaselineDate.size() <= 20))
         && (!('premise' in data) || (data.premise is string && data.premise.size() <= 8000))
-        && (!('targetAudience' in data) || (data.targetAudience is string && data.targetAudience.size() <= 200))
         && (!('coverImageUrl' in data) || isValidSafeImageRef(data.coverImageUrl, 500000))
         && (!('coverImage' in data) || isValidSafeImageRef(data.coverImage, 500000))
         && (!('frontCoverImage' in data) || isValidSafeImageRef(data.frontCoverImage, 500000))
-        && (!('coverTitleFont' in data) || (data.coverTitleFont is string && data.coverTitleFont.size() <= 80))
-        && (!('coverAccentColor' in data) || (data.coverAccentColor is string && data.coverAccentColor.size() <= 40))
         && (!('chapters' in data) || (
           data.chapters is list
           && data.chapters.size() <= 300
           && (data.chapters.size() == 0 || (
             data.chapters[0] is map
             && data.chapters[0].keys().hasAll(['id', 'title', 'content'])
-            && data.chapters[0].id is string && data.chapters[0].id.size() >= 1 && data.chapters[0].id.size() <= 128
+            && data.chapters[0].id is string && data.chapters[0].id.size() <= 128
             && data.chapters[0].title is string && data.chapters[0].title.size() <= 500
             && data.chapters[0].content is string && data.chapters[0].content.size() <= 1000000
           ))
@@ -294,8 +223,6 @@ service cloud.firestore {
           && (data.mediaLibrary.size() == 0 || (
             data.mediaLibrary[0] is map
             && data.mediaLibrary[0].keys().hasAll(['id', 'title', 'imageUrl'])
-            && data.mediaLibrary[0].id is string && data.mediaLibrary[0].id.size() >= 1 && data.mediaLibrary[0].id.size() <= 128
-            && data.mediaLibrary[0].title is string && data.mediaLibrary[0].title.size() <= 300
             && isValidSafeImageRef(data.mediaLibrary[0].imageUrl, 500000)
           ))
         ))
@@ -305,9 +232,6 @@ service cloud.firestore {
           && (data.loreEntries.size() == 0 || (
             data.loreEntries[0] is map
             && data.loreEntries[0].keys().hasAll(['id', 'name', 'category'])
-            && data.loreEntries[0].id is string && data.loreEntries[0].id.size() >= 1 && data.loreEntries[0].id.size() <= 128
-            && data.loreEntries[0].name is string && data.loreEntries[0].name.size() <= 200
-            && data.loreEntries[0].category is string && data.loreEntries[0].category.size() <= 80
           ))
         ))
         && (!('publishingKit' in data) || isValidPublishingKit(data.publishingKit))
@@ -322,24 +246,66 @@ service cloud.firestore {
         && (!('chapterOutlines' in data) || (
           data.chapterOutlines is list
           && data.chapterOutlines.size() <= 300
-          && (data.chapterOutlines.size() == 0 || (
-            data.chapterOutlines[0] is map
-            && data.chapterOutlines[0].keys().hasAll(['id', 'number', 'title'])
-            && data.chapterOutlines[0].id is string && data.chapterOutlines[0].id.size() >= 1 && data.chapterOutlines[0].id.size() <= 128
-          ))
+          && (data.chapterOutlines.size() == 0 || (data.chapterOutlines[0] is map && data.chapterOutlines[0].keys().hasAll(['id', 'number', 'title'])))
         ))
         && (!('loreSummaries' in data) || (
           data.loreSummaries is list
           && data.loreSummaries.size() <= 500
-          && (data.loreSummaries.size() == 0 || (
-            data.loreSummaries[0] is map
-            && data.loreSummaries[0].keys().hasAll(['id', 'name', 'category'])
-            && data.loreSummaries[0].id is string && data.loreSummaries[0].id.size() >= 1 && data.loreSummaries[0].id.size() <= 128
-          ))
+          && (data.loreSummaries.size() == 0 || (data.loreSummaries[0] is map && data.loreSummaries[0].keys().hasAll(['id', 'name', 'category'])))
         ))
-        && (!('_stubVersion' in data) || (data._stubVersion is string && data._stubVersion.size() <= 40))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    function isValidChapter(data, bookId, chapterId) {
+      return data.keys().hasAll(['id', 'bookId', 'userId', 'number', 'title', 'content', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'bookId', 'userId', 'number', 'act', 'title', 'summary', 'goal',
+          'conflict', 'cliffhanger', 'pov', 'setting', 'targetWords', 'wordCount',
+          'content', 'status', 'illustrations', 'notes', 'footnotes', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == chapterId
+        && isValidId(data.bookId)
+        && data.bookId == bookId
+        && isValidId(data.userId)
+        && data.number is number && data.number >= 0 && data.number <= 10000
+        && (!('act' in data) || (data.act is string && data.act.size() <= 200))
+        && data.title is string && data.title.size() <= 500
+        && (!('summary' in data) || (data.summary is string && data.summary.size() <= 8000))
+        && (!('goal' in data) || (data.goal is string && data.goal.size() <= 2000))
+        && (!('conflict' in data) || (data.conflict is string && data.conflict.size() <= 2000))
+        && (!('cliffhanger' in data) || (data.cliffhanger is string && data.cliffhanger.size() <= 2000))
+        && (!('pov' in data) || (data.pov is string && data.pov.size() <= 200))
+        && (!('setting' in data) || (data.setting is string && data.setting.size() <= 500))
+        && (!('targetWords' in data) || (data.targetWords is number && data.targetWords >= 0 && data.targetWords <= 1000000))
+        && (!('wordCount' in data) || (data.wordCount is number && data.wordCount >= 0 && data.wordCount <= 1000000))
+        && data.content is string && data.content.size() <= 1000000
+        && (!('status' in data) || (data.status is string && data.status in ['draft', 'review', 'polished', 'final']))
+        && (!('illustrations' in data) || (
+          data.illustrations is list
+          && data.illustrations.size() <= 50
+          && (data.illustrations.size() == 0 || (
+            data.illustrations[0] is map
+            && data.illustrations[0].keys().hasAll(['id', 'title', 'imageUrl'])
+            && data.illustrations[0].id is string && data.illustrations[0].id.size() >= 1 && data.illustrations[0].id.size() <= 128
+            && data.illustrations[0].title is string && data.illustrations[0].title.size() <= 300
+            && isValidSafeImageRef(data.illustrations[0].imageUrl, 500000)
+          ))
+        ))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 8000))
+        && (!('footnotes' in data) || (
+          data.footnotes is list
+          && data.footnotes.size() <= 500
+          && (data.footnotes.size() == 0 || data.footnotes[0] is map)
+        ))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isParentBookOwner(bookId) {
+      return exists(/databases/$(database)/documents/books/$(bookId))
+        && get(/databases/$(database)/documents/books/$(bookId)).data.userId == request.auth.uid;
     }
 
     function isValidStudioSettings(data) {
@@ -394,7 +360,11 @@ service cloud.firestore {
     match /books/{bookId} {
       allow get: if isVerifiedUser()
         && isValidId(bookId)
-        && (existing().userId == request.auth.uid || isAdmin());
+        && (
+          resource == null
+          || ('userId' in existing() && existing().userId == request.auth.uid)
+          || isAdmin()
+        );
       allow list: if isVerifiedUser()
         && resource.data.userId == request.auth.uid;
       allow create: if isVerifiedUser()
@@ -409,14 +379,17 @@ service cloud.firestore {
           ('id' in existing() && incoming().id == existing().id)
           || (!('id' in existing()) && incoming().id == bookId)
         )
-        && incoming().userId == existing().userId
+        && (
+          ('userId' in existing() && incoming().userId == existing().userId)
+          || (!('userId' in existing()) && incoming().userId == request.auth.uid && isAdmin())
+        )
         && (
           ('createdAt' in existing() && existing().createdAt is timestamp && incoming().createdAt == existing().createdAt)
           || ((!('createdAt' in existing()) || !(existing().createdAt is timestamp)) && incoming().createdAt == request.time)
         )
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
-          'id', 'createdAt',
+          'id', 'userId', 'createdAt',
           'title', 'subtitle', 'author', 'genre', 'tone',
           'targetWordCount', 'currentWordCount', 'dailyWordCountGoal', 'wordGoalMode', 'dailyWordBaselineCount', 'dailyWordBaselineDate',
           'premise', 'targetAudience',
@@ -426,10 +399,51 @@ service cloud.firestore {
           'updatedAt'
         ])
         && isValidBook(incoming(), bookId)
-        && (existing().userId == request.auth.uid || isAdmin());
+        && (('userId' in existing() && existing().userId == request.auth.uid) || isAdmin());
       allow delete: if isVerifiedUser()
         && isValidId(bookId)
-        && (existing().userId == request.auth.uid || isAdmin());
+        && (('userId' in existing() && existing().userId == request.auth.uid) || isAdmin());
+
+      match /chapters/{chapterId} {
+        allow get: if isVerifiedUser()
+          && isValidId(bookId)
+          && isValidId(chapterId)
+          && (
+            (resource == null && isParentBookOwner(bookId))
+            || (resource != null && 'userId' in existing() && existing().userId == request.auth.uid && isParentBookOwner(bookId))
+            || isAdmin()
+          );
+        allow list: if isVerifiedUser()
+          && resource.data.userId == request.auth.uid;
+        allow create: if isVerifiedUser()
+          && isValidId(bookId)
+          && isValidId(chapterId)
+          && incoming().userId == request.auth.uid
+          && incoming().bookId == bookId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isValidChapter(incoming(), bookId, chapterId)
+          && isParentBookOwner(bookId);
+        allow update: if isVerifiedUser()
+          && isValidId(bookId)
+          && isValidId(chapterId)
+          && incoming().id == existing().id
+          && incoming().bookId == existing().bookId
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'number', 'act', 'title', 'summary', 'goal', 'conflict', 'cliffhanger',
+            'pov', 'setting', 'targetWords', 'wordCount', 'content', 'status',
+            'illustrations', 'notes', 'footnotes', 'updatedAt'
+          ])
+          && isValidChapter(incoming(), bookId, chapterId)
+          && ((existing().userId == request.auth.uid && isParentBookOwner(bookId)) || isAdmin());
+        allow delete: if isVerifiedUser()
+          && isValidId(bookId)
+          && isValidId(chapterId)
+          && ((existing().userId == request.auth.uid && isParentBookOwner(bookId)) || isAdmin());
+      }
     }
 
     match /settings/{settingId} {

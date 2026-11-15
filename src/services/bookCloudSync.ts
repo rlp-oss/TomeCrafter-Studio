@@ -7,7 +7,7 @@ import {
   query,
   where,
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "./firebase";
+import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { Book } from "../types";
 import {
   compressBookForFirestore,
@@ -19,6 +19,7 @@ import {
   DocumentSizeValidation,
   FIRESTORE_MAX_DOCUMENT_BYTES,
   FIRESTORE_SAFE_THRESHOLD_BYTES,
+  SUBCOLLECTION_STUB_VERSION,
 } from "./dataCompression";
 import {
   detectFirestoreOverflow,
@@ -26,6 +27,8 @@ import {
   syncBookWithAutoDriveOffload,
   loadBookWithDriveResolution,
   hydrateBookData,
+  fetchSubcollectionChapters,
+  deleteBookChaptersSubcollection,
   markBookKnownInCloud,
   clearKnownCloudBooks,
   sanitizeBookId,
@@ -100,11 +103,17 @@ export async function fetchUserBooksFromFirestore(userId: string): Promise<Book[
   try {
     const q = query(collection(db, path), where("userId", "==", userId));
     const snapshot = await getDocs(q);
-    const books: Book[] = [];
-    snapshot.forEach((docSnap) => {
-      markBookKnownInCloud(docSnap.id);
-      books.push(hydrateBookData(docSnap.id, docSnap.data()));
-    });
+    const books = await Promise.all(
+      snapshot.docs.map(async (docSnap) => {
+        markBookKnownInCloud(docSnap.id);
+        const data = docSnap.data();
+        if (data._stubVersion === SUBCOLLECTION_STUB_VERSION && !data.isOffloadedToDrive) {
+          const subChapters = await fetchSubcollectionChapters(docSnap.id, userId);
+          return hydrateBookData(docSnap.id, data, subChapters);
+        }
+        return hydrateBookData(docSnap.id, data);
+      })
+    );
     return books.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -121,17 +130,33 @@ export function subscribeToUserBooks(
 ): () => void {
   const path = "books";
   const q = query(collection(db, path), where("userId", "==", userId));
+  let snapshotVersion = 0;
 
   return onSnapshot(
     q,
-    (snapshot) => {
-      const cloudBooks: Book[] = [];
-      snapshot.forEach((docSnap) => {
-        markBookKnownInCloud(docSnap.id);
-        cloudBooks.push(hydrateBookData(docSnap.id, docSnap.data()));
-      });
-      cloudBooks.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-      onBooks(cloudBooks);
+    async (snapshot) => {
+      const currentVersion = ++snapshotVersion;
+      try {
+        const cloudBooks = await Promise.all(
+          snapshot.docs.map(async (docSnap) => {
+            markBookKnownInCloud(docSnap.id);
+            const data = docSnap.data();
+            if (data._stubVersion === SUBCOLLECTION_STUB_VERSION && !data.isOffloadedToDrive) {
+              const subChapters = await fetchSubcollectionChapters(docSnap.id, userId);
+              return hydrateBookData(docSnap.id, data, subChapters);
+            }
+            return hydrateBookData(docSnap.id, data);
+          })
+        );
+        if (currentVersion !== snapshotVersion) return;
+        cloudBooks.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        onBooks(cloudBooks);
+      } catch (err) {
+        if (currentVersion !== snapshotVersion) return;
+        if (onError && err instanceof Error) {
+          onError(err);
+        }
+      }
     },
     (error) => {
       try {
@@ -146,12 +171,13 @@ export function subscribeToUserBooks(
 }
 
 /**
- * Deletes a book document from Firestore.
+ * Deletes a book document and its chapter subcollection documents from Firestore.
  */
 export async function deleteBookFromFirestore(bookId: string): Promise<void> {
   const safeId = sanitizeBookId(bookId);
   const path = `books/${safeId}`;
   try {
+    await deleteBookChaptersSubcollection(safeId, auth.currentUser?.uid || "");
     await deleteDoc(doc(db, "books", safeId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
