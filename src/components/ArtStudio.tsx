@@ -107,13 +107,6 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const coverFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Gallery / New Scene Art State
-  const [scenePrompt, setScenePrompt] = useState("");
-  const [sceneStyle, setSceneStyle] = useState("cinematic_digital");
-  const [sceneRatio, setSceneRatio] = useState<"16:9" | "3:4" | "1:1" | "4:3">("16:9");
-  const [targetChapterId, setTargetChapterId] = useState(book.chapters[0]?.id || "");
-  const [isGeneratingSceneArt, setIsGeneratingSceneArt] = useState(false);
-
   // Full Screen Cover & Spine Preview Modal State
   const [showFullScreenCoverModal, setShowFullScreenCoverModal] = useState(false);
   const [fullScreenInitialMode, setFullScreenInitialMode] = useState<"wrap" | "3d" | "front" | "spine" | "back">("wrap");
@@ -140,18 +133,6 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
 
   const spineWidthInches = liveSpineMetrics.spineWidthInches.toFixed(3);
   const spineWidthMm = liveSpineMetrics.spineWidthMm.toFixed(1);
-
-  // Collect all illustrations across all chapters
-  const allIllustrations: { chapterTitle: string; chapterNumber: number; illustration: ChapterIllustration }[] = [];
-  book.chapters.forEach((ch) => {
-    (ch.illustrations || []).forEach((ill) => {
-      allIllustrations.push({
-        chapterTitle: ch.title,
-        chapterNumber: ch.number,
-        illustration: ill,
-      });
-    });
-  });
 
   const handleGenerateCover = async () => {
     setIsGeneratingCover(true);
@@ -215,79 +196,6 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
     } finally {
       setIsUploadingCover(false);
     }
-  };
-
-  const handleGenerateSceneArt = async () => {
-    if (!scenePrompt.trim() || !targetChapterId) return;
-    setIsGeneratingSceneArt(true);
-    setImageErrorNotice(null);
-
-    try {
-      const res = await apiService.generateIllustration({
-        prompt: scenePrompt,
-        style: sceneStyle,
-        aspectRatio: sceneRatio,
-        sceneContext: `Illustration for ${book.title}`,
-      });
-
-      if (!res.imageUrl) {
-        setImageErrorNotice("No scene image was returned. Ensure a billing-enabled Gemini API key is configured in Settings > Secrets.");
-        return;
-      }
-
-      const newIll: ChapterIllustration = {
-        id: `ill-art-${Date.now()}`,
-        title: scenePrompt.slice(0, 35),
-        prompt: scenePrompt,
-        enhancedPrompt: res.enhancedPrompt,
-        style: sceneStyle,
-        aspectRatio: sceneRatio,
-        imageUrl: res.imageUrl,
-        placement: "header",
-        createdAt: new Date().toISOString(),
-      };
-
-      const updatedChapters = book.chapters.map((ch) => {
-        if (ch.id === targetChapterId) {
-          return {
-            ...ch,
-            illustrations: [...(ch.illustrations || []), newIll],
-          };
-        }
-        return ch;
-      });
-
-      onUpdateBook({
-        ...book,
-        chapters: updatedChapters,
-        updatedAt: new Date().toISOString(),
-      });
-
-      setScenePrompt("");
-    } catch (err: any) {
-      setImageErrorNotice(err?.message || "Scene art generation failed.");
-    } finally {
-      setIsGeneratingSceneArt(false);
-    }
-  };
-
-  const handleDeleteIllustration = (chId: string, illId: string) => {
-    const updatedChapters = book.chapters.map((ch) => {
-      if (ch.id === chId) {
-        return {
-          ...ch,
-          illustrations: (ch.illustrations || []).filter((i) => i.id !== illId),
-        };
-      }
-      return ch;
-    });
-    onUpdateBook({
-      ...book,
-      chapters: updatedChapters,
-      updatedAt: new Date().toISOString(),
-    });
-    setToastNotice("Illustration removed from manuscript.");
-    setTimeout(() => setToastNotice(null), 3500);
   };
 
   // Artwork Backup & Download State
@@ -383,7 +291,11 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ book, onUpdateBook, onOpen
     }
   };
 
-  const totalIllustrationsCount = allIllustrations.length + (book.mediaLibrary?.length || 0);
+  const chapterIllustrationsCount = book.chapters.reduce(
+    (sum, ch) => sum + (ch.illustrations?.length || 0),
+    0
+  );
+  const totalIllustrationsCount = chapterIllustrationsCount + (book.mediaLibrary?.length || 0);
   const totalArtworkAssetsCount =
     (book.coverImage ? 1 : 0) +
     (book.frontCoverImage && book.frontCoverImage !== book.coverImage ? 1 : 0) +

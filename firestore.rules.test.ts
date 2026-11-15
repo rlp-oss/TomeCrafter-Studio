@@ -3,6 +3,8 @@
  * Verifies all 12 adversarial payloads against firestore.rules.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export interface DirtyDozenCase {
   id: number;
@@ -70,7 +72,7 @@ export const DIRTY_DOZEN_PAYLOADS: DirtyDozenCase[] = [
     name: 'Email Spoofing Admin Bypass (unverified email)',
     operation: 'update',
     path: 'settings/studio',
-    auth: { uid: 'attacker', email: 'codygermain032@gmail.com', email_verified: false },
+    auth: { uid: 'attacker', email: process.env.TEST_ADMIN_EMAIL || 'admin@example.com', email_verified: false },
     payload: {
       studioName: 'Hijacked Studio',
     },
@@ -174,3 +176,25 @@ export const DIRTY_DOZEN_PAYLOADS: DirtyDozenCase[] = [
 ];
 
 assert.equal(DIRTY_DOZEN_PAYLOADS.length, 12);
+
+const rulesSource = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
+
+// Structural verification of Eight-Pillar & Red-Team invariants in firestore.rules
+assert.match(rulesSource, /rules_version\s*=\s*'2'/);
+assert.match(rulesSource, /match\s*\/\{document=\*\*\}\s*\{\s*allow read, write:\s*if false;/);
+assert.match(rulesSource, /request\.auth\.token\.email_verified\s*==\s*true/);
+assert.match(rulesSource, /incoming\(\)\.email\s*==\s*request\.auth\.token\.email/);
+assert.match(rulesSource, /incoming\(\)\.createdAt\s*==\s*request\.time/);
+assert.match(rulesSource, /incoming\(\)\.updatedAt\s*==\s*request\.time/);
+assert.match(rulesSource, /incoming\(\)\.userId\s*==\s*existing\(\)\.userId/);
+assert.match(rulesSource, /incoming\(\)\.createdAt\s*==\s*existing\(\)\.createdAt/);
+assert.match(rulesSource, /function isValidOffloadMetadata\(/);
+assert.match(rulesSource, /function isValidFormattingSettings\(/);
+assert.match(rulesSource, /function isValidPublishingKit\(/);
+assert.match(rulesSource, /function isValidOriginalityReport\(/);
+assert.match(rulesSource, /function isValidStudioLogo\(/);
+assert.match(rulesSource, /match \/admins\/\{adminId\}[\s\S]*allow list, create, update, delete:\s*if false;/);
+assert.match(rulesSource, /allow list:\s*if isVerifiedUser\(\)\s*&&\s*resource\.data\.userId\s*==\s*request\.auth\.uid;/);
+
+console.log('All 12 Dirty Dozen adversarial specs and structural rules invariants verified.');
+

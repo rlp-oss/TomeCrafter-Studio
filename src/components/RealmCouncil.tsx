@@ -37,6 +37,7 @@ import {
   ChevronUp,
   Link2,
   Type,
+  Building2,
 } from "lucide-react";
 import {
   AgentId,
@@ -608,6 +609,16 @@ export const RealmCouncil: React.FC<RealmCouncilProps> = ({
 
           {/* Mode Switcher Tabs + Full Book Read Audit CTA */}
           <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
+            {onNavigateToTab && (
+              <button
+                onClick={() => onNavigateToTab("studio")}
+                className="flex items-center space-x-2 px-3.5 py-2.5 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-200 border border-stone-700 text-xs font-medium transition-colors"
+                title="Open 8-Department Publishing Studio & Specialist Teams"
+              >
+                <Building2 className="w-4 h-4 text-amber-400" />
+                <span>8-Dept Studio</span>
+              </button>
+            )}
             <button
               onClick={handleRunFullBookReadAudit}
               disabled={isRunningFullBookAudit || totalChapters === 0}

@@ -24,12 +24,14 @@ import {
   Zap,
   Settings,
   Headphones,
+  Building2,
 } from "lucide-react";
 import { Book } from "../types";
 import { GoogleAuthButton } from "./GoogleAuthButton";
 import { AutoSaveIndicator, SaveStatus } from "./AutoSaveIndicator";
 
 export type ActiveTab =
+  | "studio"
   | "outline"
   | "editor"
   | "dictation"
@@ -98,6 +100,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const progressPercent = Math.min(100, Math.round((totalWords / targetWords) * 100));
 
   const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: string }[] = [
+    { id: "studio", label: "Publishing Studio", icon: <Building2 className="w-4 h-4" />, badge: "8 Depts" },
     { id: "outline", label: "Chapter Builder", icon: <LayoutGrid className="w-4 h-4" /> },
     { id: "editor", label: "Manuscript Studio", icon: <Feather className="w-4 h-4" /> },
     { id: "audiobook", label: "Audiobook Studio", icon: <Headphones className="w-4 h-4" />, badge: "Voice AI / Drive" },

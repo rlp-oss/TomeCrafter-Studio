@@ -411,6 +411,10 @@ export interface FirestoreBookMetadataStub {
   genre: Genre;
   targetWordCount: number;
   currentWordCount: number;
+  dailyWordCountGoal?: number;
+  wordGoalMode?: "project" | "daily";
+  dailyWordBaselineCount?: number;
+  dailyWordBaselineDate?: string;
   premise: string;
   tone: string;
   targetAudience?: string;
@@ -434,6 +438,10 @@ export interface Book {
   genre: Genre;
   targetWordCount: number;
   currentWordCount: number;
+  dailyWordCountGoal?: number;
+  wordGoalMode?: "project" | "daily";
+  dailyWordBaselineCount?: number;
+  dailyWordBaselineDate?: string;
   premise: string;
   tone: string;
   targetAudience?: string;
@@ -1117,4 +1125,114 @@ export interface StudioSettings {
   updatedAt: string;
 }
 
+// ----------------------------------------------------------------------------
+// 8-Department Publishing Studio & Specialist Staff Types
+// ----------------------------------------------------------------------------
+
+export type DepartmentId =
+  | "scripting"
+  | "proofreading"
+  | "editing"
+  | "illustration"
+  | "cover_design"
+  | "formatting"
+  | "publishing_distribution"
+  | "marketing";
+
+export type StudioApplyActionType =
+  | "update_blurb"
+  | "update_keywords"
+  | "update_formatting"
+  | "save_chapter_notes"
+  | "append_chapter_scene"
+  | "none";
+
+export interface DepartmentTaskDefinition {
+  id: string;
+  label: string;
+  description: string;
+  targetScope: "book" | "chapter";
+  applyActionType: StudioApplyActionType;
+}
+
+export interface DepartmentStaffAgent {
+  id: string;
+  name: string;
+  role: string;
+  departmentId: DepartmentId;
+  leadAgentId: AgentId;
+  specialtySummary: string;
+  deliverables: string[];
+  promptStarters: string[];
+  tasks: DepartmentTaskDefinition[];
+  systemGuidance: string;
+}
+
+export interface StudioDepartment {
+  id: DepartmentId;
+  name: string;
+  shortLabel: string;
+  leadTitle: string;
+  leadAgentId: AgentId;
+  description: string;
+  essentialWorkflowSteps: string[];
+  primaryTab: string;
+  primaryTabLabel: string;
+  secondaryTab?: string;
+  secondaryTabLabel?: string;
+  staff: DepartmentStaffAgent[];
+}
+
+export interface StudioTaskChecklistItem {
+  item: string;
+  status: "pass" | "action_needed" | "recommended";
+  actionNote: string;
+}
+
+export interface StudioApplyableData {
+  salesBlurbHook?: string;
+  salesBlurbBody?: string;
+  salesBlurbCta?: string;
+  marketingHook?: string;
+  launchStrategy?: string;
+  keywords?: string[];
+  bisacCategories?: string[];
+  trimSize?: "6x9" | "5.5x8.5" | "8x10" | "pocket";
+  fontPreset?: FormattingSettings["fontPreset"];
+  dropCaps?: boolean;
+  sceneBreakSymbol?: string;
+  coverPrompt?: string;
+  chapterNotes?: string;
+  chapterProseAddition?: string;
+}
+
+export interface StudioDeliverableResult {
+  id: string;
+  departmentId: DepartmentId;
+  staffId: string;
+  staffName: string;
+  taskId: string;
+  taskLabel: string;
+  chapterId?: string;
+  chapterTitle?: string;
+  title: string;
+  executiveSummary: string;
+  checklist: StudioTaskChecklistItem[];
+  deliverableMarkdown: string;
+  applyableData?: StudioApplyableData;
+  generatedAt: string;
+}
+
+export type KanbanColumnId = "pending" | "in_progress" | "review" | "completed";
+
+export interface CustomStudioTask {
+  id: string;
+  departmentId: DepartmentId;
+  staffId: string;
+  title: string;
+  description: string;
+  column: KanbanColumnId;
+  pendingNote?: string;
+  createdAt: string;
+}
 

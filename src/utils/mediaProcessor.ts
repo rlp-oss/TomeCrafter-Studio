@@ -149,21 +149,28 @@ export async function processUploadedImageFile(
     outputMime = "image/jpeg";
   }
 
-  // Secondary pass if encoded data URL is still > 58 KB so Firestore inline storage stays crisp
-  if (optimizedDataUrl.length > 58000 && (targetW > 760 || targetH > 760)) {
-    const scale = 760 / Math.max(targetW, targetH);
-    const compactW = Math.max(1, Math.round(targetW * scale));
-    const compactH = Math.max(1, Math.round(targetH * scale));
-    canvas.width = compactW;
-    canvas.height = compactH;
-    const compactCtx = canvas.getContext("2d");
-    if (compactCtx) {
-      compactCtx.drawImage(img, 0, 0, compactW, compactH);
-      const compactUrl = canvas.toDataURL(outputMime, 0.74);
-      if (compactUrl.length < optimizedDataUrl.length) {
-        optimizedDataUrl = compactUrl;
-        targetW = compactW;
-        targetH = compactH;
+  // Secondary / tertiary passes so encoded data URL stays <= 62 KB for lossless Firestore inline storage
+  const compressionSteps = [
+    { maxSide: 760, q: 0.74 },
+    { maxSide: 560, q: 0.66 },
+  ];
+  for (const step of compressionSteps) {
+    if (optimizedDataUrl.length <= 62000) break;
+    if (targetW > step.maxSide || targetH > step.maxSide || step.q < quality) {
+      const scale = Math.min(1, step.maxSide / Math.max(targetW, targetH));
+      const compactW = Math.max(1, Math.round(targetW * scale));
+      const compactH = Math.max(1, Math.round(targetH * scale));
+      canvas.width = compactW;
+      canvas.height = compactH;
+      const compactCtx = canvas.getContext("2d");
+      if (compactCtx) {
+        compactCtx.drawImage(img, 0, 0, compactW, compactH);
+        const compactUrl = canvas.toDataURL(outputMime, step.q);
+        if (compactUrl.length < optimizedDataUrl.length) {
+          optimizedDataUrl = compactUrl;
+          targetW = compactW;
+          targetH = compactH;
+        }
       }
     }
   }

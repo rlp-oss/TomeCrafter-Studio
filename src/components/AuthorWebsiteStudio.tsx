@@ -90,6 +90,7 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
   const [lastSavedTime, setLastSavedTime] = useState<string>(new Date().toLocaleTimeString());
   const hasMountedRef = useRef(false);
+  const skipNextUnsavedRef = useRef(false);
 
   // Copy feedback states
   const [copiedHtml, setCopiedHtml] = useState(false);
@@ -117,19 +118,40 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
       hasMountedRef.current = true;
       return;
     }
+    if (skipNextUnsavedRef.current) {
+      skipNextUnsavedRef.current = false;
+      return;
+    }
     setSaveStatus("unsaved");
   }, [config]);
 
-  const handleManualSaveWebsite = () => {
+  const handleManualSaveWebsite = async () => {
+    if (saveStatus === "saving") return;
     setSaveStatus("saving");
     try {
       localStorage.setItem(`author_website_${book.id}`, JSON.stringify(config));
-      apiService.saveAuthorWebsite(book.id, config).catch(() => {});
+    } catch (storageErr) {
+      console.warn("Unable to cache author website locally:", storageErr);
+    }
+
+    try {
+      const response = await apiService.saveAuthorWebsite(book.id, config);
+      if (response?.config) {
+        skipNextUnsavedRef.current = true;
+        setConfig(response.config);
+        try {
+          localStorage.setItem(`author_website_${book.id}`, JSON.stringify(response.config));
+        } catch {
+          // Non-fatal if localStorage quota is exceeded after server save succeeded
+        }
+      }
       setSaveStatus("saved");
       setLastSavedTime(new Date().toLocaleTimeString());
       showToast("Author website configuration saved.");
-    } catch (err) {
-      setSaveStatus("saved");
+    } catch (err: any) {
+      console.error("Failed to save author website configuration:", err);
+      setSaveStatus("unsaved");
+      showToast(err?.message || "Failed to save author website to server.", "error");
     }
   };
 
@@ -409,7 +431,8 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
           {/* Manual Save & Quick Copy / Download Buttons */}
           <button
             onClick={handleManualSaveWebsite}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+            disabled={saveStatus === "saving"}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer disabled:opacity-60 ${
               saveStatus === "unsaved"
                 ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-500/40"
                 : "bg-stone-800 hover:bg-stone-700 text-stone-200 border-stone-700"
@@ -417,7 +440,7 @@ export const AuthorWebsiteStudio: React.FC<AuthorWebsiteStudioProps> = ({ book }
             title="Save website configuration"
           >
             <Save className="w-3.5 h-3.5 text-amber-400" />
-            <span>{saveStatus === "unsaved" ? "Save Changes" : "Save Site"}</span>
+            <span>{saveStatus === "saving" ? "Saving..." : saveStatus === "unsaved" ? "Save Changes" : "Save Site"}</span>
           </button>
 
           <button

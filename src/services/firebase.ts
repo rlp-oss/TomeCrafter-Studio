@@ -27,9 +27,20 @@ import {
   UploadTask,
 } from "firebase/storage";
 import firebaseConfigJson from "../../firebase-applet-config.json";
+import {
+  initializeFirebaseAppCheck,
+  ensureFirebaseAppCheckInitialized,
+} from "./appCheckConfig";
 
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfigJson);
+
+// Synchronously initialize Firebase App Check if a valid build-time site key is configured
+export const appCheck = initializeFirebaseAppCheck(app);
+
+// Async fallback for runtime-injected VITE_FIREBASE_APP_CHECK_SITE_KEY secrets
+export const ensureAppCheckReady = () => ensureFirebaseAppCheckInitialized(app);
+
 export const auth = getAuth(app);
 const databaseId = (firebaseConfigJson as any).firestoreDatabaseId || "(default)";
 export const db = getFirestore(app, databaseId === "(default)" ? undefined : databaseId);
@@ -233,8 +244,14 @@ export async function syncUserProfileToFirestore(
   if (!user.email) return;
   const path = `users/${user.uid}`;
   const docRef = doc(db, "users", user.uid);
-  const safeDisplayName = (updates?.displayName ?? user.displayName ?? user.email.split("@")[0] ?? "Author").slice(0, 120);
-  const safePhotoUrl = (user.photoURL || "").slice(0, 2048);
+  const safeDisplayName = (
+    updates?.displayName?.trim() ||
+    user.displayName?.trim() ||
+    user.email.split("@")[0] ||
+    "Author"
+  ).slice(0, 120);
+  const rawPhotoUrl = (user.photoURL || "").trim().slice(0, 2048);
+  const safePhotoUrl = /^https?:\/\/.+/i.test(rawPhotoUrl) ? rawPhotoUrl : "";
 
   try {
     const existing = await getDoc(docRef);

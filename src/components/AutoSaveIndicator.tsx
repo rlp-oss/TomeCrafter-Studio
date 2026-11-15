@@ -32,6 +32,7 @@ export const AutoSaveIndicator: React.FC<AutoSaveIndicatorProps> = ({
       <button
         type="button"
         onClick={onManualSave}
+        disabled={status === "saving"}
         title={
           isDriveOffloaded
             ? "Large manuscript (>1MB) offloaded to Google Drive. Click to save now."
@@ -39,7 +40,7 @@ export const AutoSaveIndicator: React.FC<AutoSaveIndicatorProps> = ({
             ? "Auto-Save is ON. Click to save immediately (Ctrl/Cmd+S)."
             : "Auto-Save is OFF (Manual Save mode). Click to save changes (Ctrl/Cmd+S)."
         }
-        className={`inline-flex items-center space-x-2 px-2.5 py-1 rounded-full border transition-all cursor-pointer select-none ${
+        className={`inline-flex items-center space-x-2 px-2.5 py-1 rounded-full border transition-all cursor-pointer select-none disabled:cursor-wait ${
           status === "saving"
             ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
             : status === "error"

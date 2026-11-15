@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, Modality, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -259,6 +258,33 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Public Firebase App Check reCAPTCHA v3 site key loader for runtime-injected env secrets
+const sanitizeRecaptchaSiteKey = (raw: unknown): string | null => {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.trim().replace(/^["']|["']$/g, "").trim();
+  if (!cleaned) return null;
+  if (
+    /^(MY_|YOUR_|TODO|ENTER_|INSERT_)|PLACEHOLDER|EXAMPLE|CHANGE_?ME|REPLACE_?|DUMMY|FAKE/i.test(
+      cleaned
+    )
+  ) {
+    return null;
+  }
+  return /^[A-Za-z0-9_-]{20,100}$/.test(cleaned) ? cleaned : null;
+};
+
+app.get("/api/firebase/app-check-config", (_req, res) => {
+  const siteKey =
+    sanitizeRecaptchaSiteKey(process.env.VITE_FIREBASE_APP_CHECK_SITE_KEY) ||
+    sanitizeRecaptchaSiteKey(process.env.FIREBASE_APP_CHECK_SITE_KEY);
+
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    configured: Boolean(siteKey),
+    siteKey,
+  });
+});
+
 // Unified /pay redirect into Omega Hub Covenant Checkout (Clean URL, no accidental quotes)
 app.get("/pay", (req, res) => {
   const omegaHubUrl = getOmegaHubUrl();
@@ -349,26 +375,37 @@ app.get("/api/ecosystem/apps", (req, res) => {
   });
 });
 
-// Realm Master Chat Endpoint
+// Realm Master & Publishing Studio Staff Chat Endpoint
 app.post("/api/agents/chat", async (req, res) => {
   try {
-    const { agentId, message, bookContext, chapterContext, chatHistory } = req.body;
+    const { agentId, staffAgent, message, bookContext, chapterContext, chatHistory } = req.body;
 
-    const systemPrompt = AGENT_SYSTEM_PROMPTS[agentId] || AGENT_SYSTEM_PROMPTS.architect;
-    
-    let contextPrompt = `${systemPrompt}\n\n`;
+    const basePrompt = AGENT_SYSTEM_PROMPTS[agentId] || AGENT_SYSTEM_PROMPTS.architect;
+    const systemPrompt =
+      staffAgent && typeof staffAgent === "object" && staffAgent.name
+        ? `${staffAgent.systemGuidance || basePrompt}\n\nYou are ${staffAgent.name} (${staffAgent.role || "Specialist"}) in the ${staffAgent.departmentName || "Publishing Studio"} department. Respond directly as this department specialist with practical, publication-ready craft guidance.`
+        : basePrompt;
+
+    let contextPrompt = "";
     if (bookContext) {
       contextPrompt += `--- CURRENT BOOK CONTEXT ---\n`;
       contextPrompt += `Title: ${bookContext.title || "Untitled"}\n`;
+      if (bookContext.subtitle) contextPrompt += `Subtitle: ${bookContext.subtitle}\n`;
+      if (bookContext.author) contextPrompt += `Author: ${bookContext.author}\n`;
       contextPrompt += `Genre: ${bookContext.genre || "Fiction"}\n`;
       contextPrompt += `Premise: ${bookContext.premise || "N/A"}\n`;
-      contextPrompt += `Target Audience / Tone: ${bookContext.tone || "General"}\n\n`;
+      contextPrompt += `Target Audience / Tone: ${bookContext.tone || "General"}\n`;
+      if (typeof bookContext.currentWordCount === "number") {
+        contextPrompt += `Current Word Count: ${bookContext.currentWordCount} / ${bookContext.targetWordCount || 50000}\n`;
+      }
+      contextPrompt += `\n`;
     }
     if (chapterContext) {
       contextPrompt += `--- CURRENT ACTIVE CHAPTER ---\n`;
       contextPrompt += `Chapter Title: ${chapterContext.title || "Untitled Chapter"}\n`;
       contextPrompt += `Chapter Goal / Beats: ${chapterContext.goal || "N/A"}\n`;
-      contextPrompt += `Chapter Text Excerpt:\n${(chapterContext.content || "").slice(0, 3000)}\n\n`;
+      if (chapterContext.summary) contextPrompt += `Summary: ${chapterContext.summary}\n`;
+      contextPrompt += `Chapter Text Excerpt:\n${(chapterContext.content || "").slice(0, 4000)}\n\n`;
     }
 
     const contents: any[] = [];
@@ -383,7 +420,7 @@ app.post("/api/agents/chat", async (req, res) => {
 
     contents.push({
       role: "user",
-      parts: [{ text: `${contextPrompt}\nUser Request: ${message}` }],
+      parts: [{ text: `${contextPrompt}User Request: ${message}` }],
     });
 
     const response = await generateContentWithRetry({
@@ -391,19 +428,180 @@ app.post("/api/agents/chat", async (req, res) => {
       contents,
       config: {
         systemInstruction: systemPrompt,
-        temperature: 0.7,
       },
     });
 
     res.json({
-      text: response.text || "The Realm Master contemplated your request.",
+      text: response.text || "The specialist reviewed your request.",
       agentId,
+      staffId: staffAgent?.id,
     });
   } catch (error: any) {
     console.error("Agent chat error:", error);
     res.status(500).json({
-      error: error.message || "Failed to communicate with the Realm Master.",
-      text: "The Realm Master is tuning their craft. Please check your connection and try again.",
+      error: error.message || "Failed to communicate with the studio specialist.",
+      text: "The specialist is reviewing your brief. Please check your connection and try again.",
+    });
+  }
+});
+
+// Publishing Studio: Execute Concrete Specialist Department Deliverable Task
+app.post("/api/studio/run-department-task", async (req, res) => {
+  try {
+    const {
+      departmentId,
+      departmentName,
+      staffId,
+      staffName,
+      staffRole,
+      staffGuidance,
+      taskId,
+      taskLabel,
+      taskDescription,
+      applyActionType = "none",
+      customBrief = "",
+      bookContext = {},
+      chapterContext = null,
+    } = req.body || {};
+
+    if (!departmentId || !staffName || !taskLabel) {
+      return res.status(400).json({ error: "Missing required department, staff, or task fields." });
+    }
+
+    const chaptersDigest = Array.isArray(bookContext.chaptersSummary)
+      ? bookContext.chaptersSummary
+          .slice(0, 20)
+          .map((ch: any) => `Ch ${ch.number}: "${ch.title}" (${ch.wordCount || 0} words, status: ${ch.status || "draft"})${ch.summary ? ` — ${String(ch.summary).slice(0, 140)}` : ""}`)
+          .join("\n")
+      : "";
+
+    const systemInstruction = `${staffGuidance || "You are a senior publishing house specialist."}
+You work in the "${departmentName}" department as ${staffName} (${staffRole}).
+Produce concrete, non-generic, publication-grade deliverables strictly grounded in the provided manuscript data.
+Never fabricate stats or claim files were exported when they were not. Output clean JSON matching the requested schema.`;
+
+    const prompt = `Execute the following publishing studio production task:
+DEPARTMENT: ${departmentName} (${departmentId})
+SPECIALIST: ${staffName} — ${staffRole}
+TASK: ${taskLabel}
+TASK SPEC: ${taskDescription || "Deliver a comprehensive department report and ready-to-use asset."}
+APPLY TARGET: ${applyActionType}
+${customBrief ? `AUTHOR BRIEF / INSTRUCTIONS:\n${customBrief}\n` : ""}
+
+--- BOOK DATA ---
+Title: ${bookContext.title || "Untitled"}
+Subtitle: ${bookContext.subtitle || "None"}
+Author: ${bookContext.author || "Author"}
+Genre: ${bookContext.genre || "Fiction"}
+Tone / Audience: ${bookContext.tone || "N/A"} | ${bookContext.targetAudience || "General Trade"}
+Premise: ${bookContext.premise || "N/A"}
+Word Count: ${bookContext.currentWordCount || 0} / ${bookContext.targetWordCount || 50000} words across ${bookContext.chapterCount || 0} chapters
+Trim & Font: ${bookContext.trimSize || "6x9"}, ${bookContext.fontPreset || "garamond"} (${bookContext.googleFontFamily || "Default"})
+Cover Configured: ${bookContext.hasCover ? "Yes" : "No"} | Illustrations Count: ${bookContext.illustrationsCount || 0}
+Existing Blurb Hook: ${bookContext.salesBlurbHook || "Not yet written"}
+Existing Keywords: ${Array.isArray(bookContext.amazonKeywords) && bookContext.amazonKeywords.length > 0 ? bookContext.amazonKeywords.join(", ") : "None"}
+${chaptersDigest ? `\nChapter Outline Snapshot:\n${chaptersDigest}` : ""}
+
+${
+  chapterContext
+    ? `--- TARGET CHAPTER ---
+Chapter ${chapterContext.number}: ${chapterContext.title}
+Goal: ${chapterContext.goal || "N/A"}
+Conflict: ${chapterContext.conflict || "N/A"}
+Summary: ${chapterContext.summary || "N/A"}
+Content Excerpt (${chapterContext.wordCount || 0} words):
+${String(chapterContext.content || "").slice(0, 5000)}`
+    : ""
+}
+
+Populate applyableData fields specifically when relevant to the task:
+- If applyActionType is "update_blurb": fill salesBlurbHook, salesBlurbBody, salesBlurbCta, marketingHook, and launchStrategy.
+- If applyActionType is "update_keywords": fill keywords (7 search phrases) and bisacCategories (2-3 standard BISAC paths).
+- If applyActionType is "update_formatting": fill trimSize ("6x9"|"5.5x8.5"|"8x10"|"pocket"), fontPreset ("garamond"|"baskerville"|"caslon"|"merriweather"|"cinzel"|"courier"|"inter"), dropCaps (boolean), and sceneBreakSymbol.
+- If applyActionType is "save_chapter_notes": fill chapterNotes with crisp actionable production notes or art/proofing notes for that chapter (and coverPrompt if an art brief).
+- If applyActionType is "append_chapter_scene": fill chapterProseAddition with publication-ready scene prose matching the book's voice.`;
+
+    const response = await generateContentWithRetry({
+      model: "gemini-4-hydrogen",
+      contents: prompt,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            executiveSummary: { type: Type.STRING },
+            checklist: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  item: { type: Type.STRING },
+                  status: { type: Type.STRING },
+                  actionNote: { type: Type.STRING },
+                },
+                required: ["item", "status", "actionNote"],
+              },
+            },
+            deliverableMarkdown: { type: Type.STRING },
+            applyableData: {
+              type: Type.OBJECT,
+              properties: {
+                salesBlurbHook: { type: Type.STRING },
+                salesBlurbBody: { type: Type.STRING },
+                salesBlurbCta: { type: Type.STRING },
+                marketingHook: { type: Type.STRING },
+                launchStrategy: { type: Type.STRING },
+                keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+                bisacCategories: { type: Type.ARRAY, items: { type: Type.STRING } },
+                trimSize: { type: Type.STRING },
+                fontPreset: { type: Type.STRING },
+                dropCaps: { type: Type.BOOLEAN },
+                sceneBreakSymbol: { type: Type.STRING },
+                coverPrompt: { type: Type.STRING },
+                chapterNotes: { type: Type.STRING },
+                chapterProseAddition: { type: Type.STRING },
+              },
+            },
+          },
+          required: ["title", "executiveSummary", "checklist", "deliverableMarkdown"],
+        },
+      },
+    });
+
+    const parsed = parseGeminiJson(response.text || "");
+    const normalizedChecklist = Array.isArray(parsed.checklist)
+      ? parsed.checklist.map((c: any) => ({
+          item: String(c?.item || "Production check"),
+          status:
+            c?.status === "pass" || c?.status === "action_needed" || c?.status === "recommended"
+              ? c.status
+              : "recommended",
+          actionNote: String(c?.actionNote || ""),
+        }))
+      : [];
+
+    return res.json({
+      id: `deliv-${Date.now()}`,
+      departmentId,
+      staffId: staffId || "",
+      staffName,
+      taskId: taskId || "",
+      taskLabel,
+      chapterId: chapterContext?.id || undefined,
+      chapterTitle: chapterContext?.title || undefined,
+      title: parsed.title || taskLabel,
+      executiveSummary: parsed.executiveSummary || "Deliverable prepared by department specialist.",
+      checklist: normalizedChecklist,
+      deliverableMarkdown: parsed.deliverableMarkdown || parsed.rawText || "",
+      applyableData: parsed.applyableData || undefined,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error("Studio department task error:", error);
+    return res.status(500).json({
+      error: error?.message || "Failed to execute department production task.",
     });
   }
 });
@@ -4604,6 +4802,7 @@ app.post("/api/audio/audition", async (req, res) => {
 // Vite middleware & Production Serving
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef, useMemo, useEffect } from "react";
 import {
   Upload,
   Image as ImageIcon,
@@ -118,6 +118,23 @@ export const IllustrationManager: React.FC<IllustrationManagerProps> = ({
     }, 4500);
   };
 
+  // Keep upload and bulk-move chapter targets synced when switching books or chapters
+  useEffect(() => {
+    if (
+      uploadDestination !== "vault" &&
+      uploadDestination !== "cover" &&
+      !book.chapters.some((c) => c.id === uploadDestination)
+    ) {
+      setUploadDestination(book.chapters[0]?.id || "vault");
+    }
+    if (
+      bulkMoveTarget !== "vault" &&
+      !book.chapters.some((c) => c.id === bulkMoveTarget)
+    ) {
+      setBulkMoveTarget(book.chapters[0]?.id || "vault");
+    }
+  }, [book.id, book.chapters, uploadDestination, bulkMoveTarget]);
+
   // Flatten all chapter illustrations + vault illustrations into a unified list
   const allMediaItems: ManagedMediaItem[] = useMemo(() => {
     const items: ManagedMediaItem[] = [];
@@ -165,7 +182,10 @@ export const IllustrationManager: React.FC<IllustrationManagerProps> = ({
     if (ill.sourceType === "uploaded_file" || Boolean(ill.fileName)) {
       return "uploaded";
     }
-    if (ill.sourceType === "external_url" || (ill.imageUrl.startsWith("http") && !ill.enhancedPrompt)) {
+    if (
+      ill.sourceType === "external_url" ||
+      ((ill.imageUrl || "").startsWith("http") && !ill.enhancedPrompt)
+    ) {
       return "url";
     }
     return "ai";

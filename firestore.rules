@@ -31,26 +31,215 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
-      return isVerifiedUser() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'codygermain032@gmail.com'
+    function isValidEmail(val) {
+      return val is string && val.size() >= 3 && val.size() <= 320 && val.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+    }
+
+    function isValidHttpUrl(val, maxLen) {
+      return val is string && val.size() >= 8 && val.size() <= maxLen && val.matches('^https?://.+');
+    }
+
+    function isValidSafeImageRef(val, maxLen) {
+      return val is string && val.size() <= maxLen && (
+        val == '' ||
+        val.matches('^https?://.+') ||
+        val.matches('^data:image/(png|jpeg|jpg|webp|gif|svg\\+xml);.+') ||
+        val.matches('^/[^\\s]+$')
       );
     }
 
-    // 3. Entity Validation Blueprints
+    function isValidSafeLink(val, maxLen) {
+      return val is string && val.size() <= maxLen && !val.lower().matches('^\\s*(javascript|vbscript|data):.*');
+    }
+
+    // Bootstrapped primary admin checked before DB exists() lookup to minimize read cost
+    function isAdmin() {
+      return isVerifiedUser() && (
+        ('email' in request.auth.token && request.auth.token.email.lower() == 'codygermain032@gmail.com') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 3. Nested Map Validation Blueprints
+    function isValidOffloadMetadata(meta) {
+      return meta is map
+        && meta.keys().hasAll([
+          'driveFileId', 'driveFileName', 'offloadedAt',
+          'originalSizeBytes', 'originalSizeFormatted',
+          'compressedSizeBytes', 'compressedSizeFormatted',
+          'chapterCount', 'loreCount', 'reason'
+        ])
+        && meta.keys().hasOnly([
+          'driveFileId', 'driveWebViewLink', 'driveFileName', 'offloadedAt',
+          'originalSizeBytes', 'originalSizeFormatted',
+          'compressedSizeBytes', 'compressedSizeFormatted',
+          'chapterCount', 'loreCount', 'reason'
+        ])
+        && meta.driveFileId is string && meta.driveFileId.size() >= 1 && meta.driveFileId.size() <= 256
+        && (!('driveWebViewLink' in meta) || meta.driveWebViewLink == '' || isValidHttpUrl(meta.driveWebViewLink, 1024))
+        && meta.driveFileName is string && meta.driveFileName.size() >= 1 && meta.driveFileName.size() <= 256
+        && meta.offloadedAt is string && meta.offloadedAt.size() >= 1 && meta.offloadedAt.size() <= 64
+        && meta.originalSizeBytes is number && meta.originalSizeBytes >= 0 && meta.originalSizeBytes <= 1000000000
+        && meta.originalSizeFormatted is string && meta.originalSizeFormatted.size() <= 40
+        && meta.compressedSizeBytes is number && meta.compressedSizeBytes >= 0 && meta.compressedSizeBytes <= 1000000000
+        && meta.compressedSizeFormatted is string && meta.compressedSizeFormatted.size() <= 40
+        && meta.chapterCount is number && meta.chapterCount >= 0 && meta.chapterCount <= 1000
+        && meta.loreCount is number && meta.loreCount >= 0 && meta.loreCount <= 2000
+        && meta.reason is string && meta.reason.size() <= 500;
+    }
+
+    function isValidFormattingSettings(fs) {
+      return fs is map
+        && fs.keys().hasOnly([
+          'trimSize', 'fontPreset', 'googleFontFamily', 'fontColor', 'fontSize', 'fontSizePx',
+          'lineSpacing', 'lineHeightValue', 'letterSpacingEm', 'paragraphIndentEm', 'paragraphSpacingEm',
+          'textAlign', 'chapterHeadingCase', 'chapterWordBudget', 'dropCaps', 'dropCapSize',
+          'sceneBreakSymbol', 'showPageNumbers', 'runningHeaders', 'includeFrontMatter', 'includeBackMatter',
+          'dedicationText', 'copyrightText', 'authorBio', 'newsletterLink', 'acknowledgments'
+        ])
+        && (!('trimSize' in fs) || (fs.trimSize is string && fs.trimSize.size() <= 32))
+        && (!('fontPreset' in fs) || (fs.fontPreset is string && fs.fontPreset.size() <= 64))
+        && (!('googleFontFamily' in fs) || (fs.googleFontFamily is string && fs.googleFontFamily.size() <= 120))
+        && (!('fontColor' in fs) || (fs.fontColor is string && fs.fontColor.size() <= 40))
+        && (!('fontSize' in fs) || (fs.fontSize is string && fs.fontSize.size() <= 24))
+        && (!('fontSizePx' in fs) || (fs.fontSizePx is number && fs.fontSizePx >= 6 && fs.fontSizePx <= 72))
+        && (!('lineSpacing' in fs) || (fs.lineSpacing is string && fs.lineSpacing.size() <= 24))
+        && (!('lineHeightValue' in fs) || (fs.lineHeightValue is number && fs.lineHeightValue >= 0.5 && fs.lineHeightValue <= 5))
+        && (!('letterSpacingEm' in fs) || (fs.letterSpacingEm is number && fs.letterSpacingEm >= -0.5 && fs.letterSpacingEm <= 2))
+        && (!('paragraphIndentEm' in fs) || (fs.paragraphIndentEm is number && fs.paragraphIndentEm >= 0 && fs.paragraphIndentEm <= 10))
+        && (!('paragraphSpacingEm' in fs) || (fs.paragraphSpacingEm is number && fs.paragraphSpacingEm >= 0 && fs.paragraphSpacingEm <= 10))
+        && (!('textAlign' in fs) || (fs.textAlign is string && fs.textAlign.size() <= 24))
+        && (!('chapterHeadingCase' in fs) || (fs.chapterHeadingCase is string && fs.chapterHeadingCase.size() <= 32))
+        && (!('chapterWordBudget' in fs) || (fs.chapterWordBudget is number && fs.chapterWordBudget >= 0 && fs.chapterWordBudget <= 500000))
+        && (!('dropCaps' in fs) || fs.dropCaps is bool)
+        && (!('dropCapSize' in fs) || (fs.dropCapSize is number && fs.dropCapSize >= 1 && fs.dropCapSize <= 20))
+        && (!('sceneBreakSymbol' in fs) || (fs.sceneBreakSymbol is string && fs.sceneBreakSymbol.size() <= 40))
+        && (!('showPageNumbers' in fs) || fs.showPageNumbers is bool)
+        && (!('runningHeaders' in fs) || fs.runningHeaders is bool)
+        && (!('includeFrontMatter' in fs) || fs.includeFrontMatter is bool)
+        && (!('includeBackMatter' in fs) || fs.includeBackMatter is bool)
+        && (!('dedicationText' in fs) || (fs.dedicationText is string && fs.dedicationText.size() <= 2000))
+        && (!('copyrightText' in fs) || (fs.copyrightText is string && fs.copyrightText.size() <= 2000))
+        && (!('authorBio' in fs) || (fs.authorBio is string && fs.authorBio.size() <= 4000))
+        && (!('newsletterLink' in fs) || isValidSafeLink(fs.newsletterLink, 512))
+        && (!('acknowledgments' in fs) || (fs.acknowledgments is string && fs.acknowledgments.size() <= 4000));
+    }
+
+    function isValidPublishingKit(pk) {
+      return pk is map
+        && pk.keys().hasOnly([
+          'commercialTitle', 'catchySubtitle', 'salesBlurb', 'amazonKeywords',
+          'bisacCategories', 'compTitles', 'targetAudience', 'pricingRecommendations',
+          'marketingHook', 'launchStrategy', 'queryLetter', 'printSpecs',
+          'isbn', 'copyrightYear', 'publisherImprint'
+        ])
+        && (!('commercialTitle' in pk) || (pk.commercialTitle is string && pk.commercialTitle.size() <= 240))
+        && (!('catchySubtitle' in pk) || (pk.catchySubtitle is string && pk.catchySubtitle.size() <= 300))
+        && (!('salesBlurb' in pk) || (
+          pk.salesBlurb is map
+          && pk.salesBlurb.keys().hasOnly(['hook', 'body', 'callToAction'])
+          && (!('hook' in pk.salesBlurb) || (pk.salesBlurb.hook is string && pk.salesBlurb.hook.size() <= 500))
+          && (!('body' in pk.salesBlurb) || (pk.salesBlurb.body is string && pk.salesBlurb.body.size() <= 4000))
+          && (!('callToAction' in pk.salesBlurb) || (pk.salesBlurb.callToAction is string && pk.salesBlurb.callToAction.size() <= 500))
+        ))
+        && (!('amazonKeywords' in pk) || (pk.amazonKeywords is list && pk.amazonKeywords.size() <= 30 && (pk.amazonKeywords.size() == 0 || (pk.amazonKeywords[0] is string && pk.amazonKeywords[0].size() <= 120))))
+        && (!('bisacCategories' in pk) || (pk.bisacCategories is list && pk.bisacCategories.size() <= 20 && (pk.bisacCategories.size() == 0 || (pk.bisacCategories[0] is string && pk.bisacCategories[0].size() <= 160))))
+        && (!('compTitles' in pk) || (pk.compTitles is list && pk.compTitles.size() <= 20 && (pk.compTitles.size() == 0 || (pk.compTitles[0] is string && pk.compTitles[0].size() <= 200))))
+        && (!('targetAudience' in pk) || (pk.targetAudience is string && pk.targetAudience.size() <= 500))
+        && (!('pricingRecommendations' in pk) || (
+          pk.pricingRecommendations is map
+          && pk.pricingRecommendations.keys().hasOnly(['ebook', 'paperback', 'hardcover'])
+          && (!('ebook' in pk.pricingRecommendations) || (pk.pricingRecommendations.ebook is number && pk.pricingRecommendations.ebook >= 0 && pk.pricingRecommendations.ebook <= 10000))
+          && (!('paperback' in pk.pricingRecommendations) || (pk.pricingRecommendations.paperback is number && pk.pricingRecommendations.paperback >= 0 && pk.pricingRecommendations.paperback <= 10000))
+          && (!('hardcover' in pk.pricingRecommendations) || (pk.pricingRecommendations.hardcover is number && pk.pricingRecommendations.hardcover >= 0 && pk.pricingRecommendations.hardcover <= 10000))
+        ))
+        && (!('marketingHook' in pk) || (pk.marketingHook is string && pk.marketingHook.size() <= 1000))
+        && (!('launchStrategy' in pk) || (pk.launchStrategy is string && pk.launchStrategy.size() <= 10000))
+        && (!('queryLetter' in pk) || (pk.queryLetter is string && pk.queryLetter.size() <= 12000))
+        && (!('printSpecs' in pk) || (
+          pk.printSpecs is map
+          && pk.printSpecs.keys().hasOnly(['recommendedTrimSize', 'estimatedPageCount', 'spineWidthInches', 'margins'])
+          && (!('recommendedTrimSize' in pk.printSpecs) || (pk.printSpecs.recommendedTrimSize is string && pk.printSpecs.recommendedTrimSize.size() <= 80))
+          && (!('estimatedPageCount' in pk.printSpecs) || (pk.printSpecs.estimatedPageCount is number && pk.printSpecs.estimatedPageCount >= 0 && pk.printSpecs.estimatedPageCount <= 50000))
+          && (!('spineWidthInches' in pk.printSpecs) || (pk.printSpecs.spineWidthInches is number && pk.printSpecs.spineWidthInches >= 0 && pk.printSpecs.spineWidthInches <= 20))
+          && (!('margins' in pk.printSpecs) || (
+            pk.printSpecs.margins is map
+            && pk.printSpecs.margins.keys().hasOnly(['insideGutter', 'outside', 'top', 'bottom'])
+            && (!('insideGutter' in pk.printSpecs.margins) || (pk.printSpecs.margins.insideGutter is string && pk.printSpecs.margins.insideGutter.size() <= 32))
+            && (!('outside' in pk.printSpecs.margins) || (pk.printSpecs.margins.outside is string && pk.printSpecs.margins.outside.size() <= 32))
+            && (!('top' in pk.printSpecs.margins) || (pk.printSpecs.margins.top is string && pk.printSpecs.margins.top.size() <= 32))
+            && (!('bottom' in pk.printSpecs.margins) || (pk.printSpecs.margins.bottom is string && pk.printSpecs.margins.bottom.size() <= 32))
+          ))
+        ))
+        && (!('isbn' in pk) || (pk.isbn is string && pk.isbn.size() <= 40))
+        && (!('copyrightYear' in pk) || (pk.copyrightYear is string && pk.copyrightYear.size() <= 16))
+        && (!('publisherImprint' in pk) || (pk.publisherImprint is string && pk.publisherImprint.size() <= 160));
+    }
+
+    function isValidOriginalityReport(report) {
+      return report is map
+        && report.keys().hasOnly([
+          'score', 'authorSharePercent', 'copyrightStatus', 'c2paManifestHash',
+          'humanBadgeRoyaltyTier', 'badgeRoyaltyTier', 'is100PercentOriginal',
+          'totalMicroRoyaltiesSubmitted', 'taggedAuthors', 'recentTransactions',
+          'breakdown', 'analysisNotes', 'lastAuditedAt'
+        ])
+        && (!('score' in report) || (report.score is number && report.score >= 0 && report.score <= 100))
+        && (!('authorSharePercent' in report) || (report.authorSharePercent is number && report.authorSharePercent >= 0 && report.authorSharePercent <= 100))
+        && (!('copyrightStatus' in report) || (report.copyrightStatus is string && report.copyrightStatus.size() <= 160))
+        && (!('c2paManifestHash' in report) || (report.c2paManifestHash is string && report.c2paManifestHash.size() <= 256))
+        && (!('humanBadgeRoyaltyTier' in report) || (report.humanBadgeRoyaltyTier is string && report.humanBadgeRoyaltyTier.size() <= 160))
+        && (!('badgeRoyaltyTier' in report) || (report.badgeRoyaltyTier is string && report.badgeRoyaltyTier.size() <= 160))
+        && (!('is100PercentOriginal' in report) || report.is100PercentOriginal is bool)
+        && (!('totalMicroRoyaltiesSubmitted' in report) || (report.totalMicroRoyaltiesSubmitted is number && report.totalMicroRoyaltiesSubmitted >= 0 && report.totalMicroRoyaltiesSubmitted <= 1000000000))
+        && (!('taggedAuthors' in report) || (report.taggedAuthors is list && report.taggedAuthors.size() <= 100 && (report.taggedAuthors.size() == 0 || report.taggedAuthors[0] is map)))
+        && (!('recentTransactions' in report) || (report.recentTransactions is list && report.recentTransactions.size() <= 50 && (report.recentTransactions.size() == 0 || report.recentTransactions[0] is map)))
+        && (!('breakdown' in report) || (
+          report.breakdown is map
+          && report.breakdown.keys().hasOnly(['originalHumanVoice', 'aiSynthesisNovelty', 'stylisticHomageSimilarity', 'referencedTextPercent'])
+          && (!('originalHumanVoice' in report.breakdown) || (report.breakdown.originalHumanVoice is number && report.breakdown.originalHumanVoice >= 0 && report.breakdown.originalHumanVoice <= 100))
+          && (!('aiSynthesisNovelty' in report.breakdown) || (report.breakdown.aiSynthesisNovelty is number && report.breakdown.aiSynthesisNovelty >= 0 && report.breakdown.aiSynthesisNovelty <= 100))
+          && (!('stylisticHomageSimilarity' in report.breakdown) || (report.breakdown.stylisticHomageSimilarity is number && report.breakdown.stylisticHomageSimilarity >= 0 && report.breakdown.stylisticHomageSimilarity <= 100))
+          && (!('referencedTextPercent' in report.breakdown) || (report.breakdown.referencedTextPercent is number && report.breakdown.referencedTextPercent >= 0 && report.breakdown.referencedTextPercent <= 100))
+        ))
+        && (!('analysisNotes' in report) || (report.analysisNotes is string && report.analysisNotes.size() <= 4000))
+        && (!('lastAuditedAt' in report) || (report.lastAuditedAt is string && report.lastAuditedAt.size() <= 64));
+    }
+
+    function isValidStudioLogo(logo) {
+      return logo is map
+        && logo.keys().hasAll([
+          'url', 'storagePath', 'fileName', 'fileSizeBytes', 'contentType',
+          'uploadedAt', 'uploadedByEmail', 'uploadedByUid', 'verifiedAdmin'
+        ])
+        && logo.keys().hasOnly([
+          'url', 'storagePath', 'fileName', 'fileSizeBytes', 'contentType',
+          'uploadedAt', 'uploadedByEmail', 'uploadedByUid', 'aspectRatio', 'verifiedAdmin'
+        ])
+        && isValidSafeImageRef(logo.url, 500000)
+        && logo.url.size() >= 1
+        && logo.storagePath is string && logo.storagePath.size() >= 1 && logo.storagePath.size() <= 256
+        && logo.fileName is string && logo.fileName.size() >= 1 && logo.fileName.size() <= 256
+        && logo.fileSizeBytes is number && logo.fileSizeBytes >= 0 && logo.fileSizeBytes <= 20000000
+        && logo.contentType is string && logo.contentType.size() >= 3 && logo.contentType.size() <= 100
+        && logo.uploadedAt is string && logo.uploadedAt.size() >= 1 && logo.uploadedAt.size() <= 64
+        && isValidEmail(logo.uploadedByEmail)
+        && isValidId(logo.uploadedByUid)
+        && (!('aspectRatio' in logo) || (logo.aspectRatio is string && logo.aspectRatio.size() <= 32))
+        && logo.verifiedAdmin is bool && logo.verifiedAdmin == true;
+    }
+
+    // 4. Entity Validation Blueprints
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll(['id', 'email', 'displayName', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'preferredGenre', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.id == userId
-        && data.email is string
-        && data.email.size() >= 3
-        && data.email.size() <= 320
-        && data.email == request.auth.token.email
+        && isValidEmail(data.email)
         && data.displayName is string
+        && data.displayName.size() >= 1
         && data.displayName.size() <= 120
-        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2048))
+        && (!('photoURL' in data) || isValidHttpUrl(data.photoURL, 2048))
         && (!('preferredGenre' in data) || (data.preferredGenre is string && data.preferredGenre.size() <= 80))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -60,7 +249,8 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'userId', 'title', 'author', 'genre', 'targetWordCount', 'currentWordCount', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
           'id', 'userId', 'title', 'subtitle', 'author', 'genre', 'tone',
-          'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
+          'targetWordCount', 'currentWordCount', 'dailyWordCountGoal', 'wordGoalMode', 'dailyWordBaselineCount', 'dailyWordBaselineDate',
+          'premise', 'targetAudience',
           'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
           'chapters', 'mediaLibrary', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
           'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
@@ -76,23 +266,77 @@ service cloud.firestore {
         && (!('tone' in data) || (data.tone is string && data.tone.size() <= 240))
         && data.targetWordCount is number && data.targetWordCount >= 0 && data.targetWordCount <= 10000000
         && data.currentWordCount is number && data.currentWordCount >= 0 && data.currentWordCount <= 10000000
+        && (!('dailyWordCountGoal' in data) || (data.dailyWordCountGoal is number && data.dailyWordCountGoal >= 1 && data.dailyWordCountGoal <= 1000000))
+        && (!('wordGoalMode' in data) || (data.wordGoalMode is string && data.wordGoalMode in ['project', 'daily']))
+        && (!('dailyWordBaselineCount' in data) || (data.dailyWordBaselineCount is number && data.dailyWordBaselineCount >= 0 && data.dailyWordBaselineCount <= 10000000))
+        && (!('dailyWordBaselineDate' in data) || (data.dailyWordBaselineDate is string && data.dailyWordBaselineDate.size() <= 20))
         && (!('premise' in data) || (data.premise is string && data.premise.size() <= 8000))
         && (!('targetAudience' in data) || (data.targetAudience is string && data.targetAudience.size() <= 200))
-        && (!('coverImageUrl' in data) || (data.coverImageUrl is string && data.coverImageUrl.size() <= 500000))
-        && (!('coverImage' in data) || (data.coverImage is string && data.coverImage.size() <= 500000))
-        && (!('frontCoverImage' in data) || (data.frontCoverImage is string && data.frontCoverImage.size() <= 500000))
+        && (!('coverImageUrl' in data) || isValidSafeImageRef(data.coverImageUrl, 500000))
+        && (!('coverImage' in data) || isValidSafeImageRef(data.coverImage, 500000))
+        && (!('frontCoverImage' in data) || isValidSafeImageRef(data.frontCoverImage, 500000))
         && (!('coverTitleFont' in data) || (data.coverTitleFont is string && data.coverTitleFont.size() <= 80))
         && (!('coverAccentColor' in data) || (data.coverAccentColor is string && data.coverAccentColor.size() <= 40))
-        && (!('chapters' in data) || (data.chapters is list && data.chapters.size() <= 300 && (data.chapters.size() == 0 || data.chapters[0] is map)))
-        && (!('mediaLibrary' in data) || (data.mediaLibrary is list && data.mediaLibrary.size() <= 200 && (data.mediaLibrary.size() == 0 || data.mediaLibrary[0] is map)))
-        && (!('loreEntries' in data) || (data.loreEntries is list && data.loreEntries.size() <= 500 && (data.loreEntries.size() == 0 || data.loreEntries[0] is map)))
-        && (!('publishingKit' in data) || data.publishingKit is map)
-        && (!('formattingSettings' in data) || data.formattingSettings is map)
-        && (!('originalityReport' in data) || data.originalityReport is map)
+        && (!('chapters' in data) || (
+          data.chapters is list
+          && data.chapters.size() <= 300
+          && (data.chapters.size() == 0 || (
+            data.chapters[0] is map
+            && data.chapters[0].keys().hasAll(['id', 'title', 'content'])
+            && data.chapters[0].id is string && data.chapters[0].id.size() >= 1 && data.chapters[0].id.size() <= 128
+            && data.chapters[0].title is string && data.chapters[0].title.size() <= 500
+            && data.chapters[0].content is string && data.chapters[0].content.size() <= 1000000
+          ))
+        ))
+        && (!('mediaLibrary' in data) || (
+          data.mediaLibrary is list
+          && data.mediaLibrary.size() <= 200
+          && (data.mediaLibrary.size() == 0 || (
+            data.mediaLibrary[0] is map
+            && data.mediaLibrary[0].keys().hasAll(['id', 'title', 'imageUrl'])
+            && data.mediaLibrary[0].id is string && data.mediaLibrary[0].id.size() >= 1 && data.mediaLibrary[0].id.size() <= 128
+            && data.mediaLibrary[0].title is string && data.mediaLibrary[0].title.size() <= 300
+            && isValidSafeImageRef(data.mediaLibrary[0].imageUrl, 500000)
+          ))
+        ))
+        && (!('loreEntries' in data) || (
+          data.loreEntries is list
+          && data.loreEntries.size() <= 500
+          && (data.loreEntries.size() == 0 || (
+            data.loreEntries[0] is map
+            && data.loreEntries[0].keys().hasAll(['id', 'name', 'category'])
+            && data.loreEntries[0].id is string && data.loreEntries[0].id.size() >= 1 && data.loreEntries[0].id.size() <= 128
+            && data.loreEntries[0].name is string && data.loreEntries[0].name.size() <= 200
+            && data.loreEntries[0].category is string && data.loreEntries[0].category.size() <= 80
+          ))
+        ))
+        && (!('publishingKit' in data) || isValidPublishingKit(data.publishingKit))
+        && (!('formattingSettings' in data) || isValidFormattingSettings(data.formattingSettings))
+        && (!('originalityReport' in data) || isValidOriginalityReport(data.originalityReport))
         && (!('isOffloadedToDrive' in data) || data.isOffloadedToDrive is bool)
-        && (!('offloadMetadata' in data) || data.offloadMetadata == null || data.offloadMetadata is map)
-        && (!('chapterOutlines' in data) || (data.chapterOutlines is list && data.chapterOutlines.size() <= 300 && (data.chapterOutlines.size() == 0 || data.chapterOutlines[0] is map)))
-        && (!('loreSummaries' in data) || (data.loreSummaries is list && data.loreSummaries.size() <= 500 && (data.loreSummaries.size() == 0 || data.loreSummaries[0] is map)))
+        && (
+          (('isOffloadedToDrive' in data) && data.isOffloadedToDrive == true)
+            ? ('offloadMetadata' in data && isValidOffloadMetadata(data.offloadMetadata))
+            : (!('offloadMetadata' in data) || data.offloadMetadata == null)
+        )
+        && (!('chapterOutlines' in data) || (
+          data.chapterOutlines is list
+          && data.chapterOutlines.size() <= 300
+          && (data.chapterOutlines.size() == 0 || (
+            data.chapterOutlines[0] is map
+            && data.chapterOutlines[0].keys().hasAll(['id', 'number', 'title'])
+            && data.chapterOutlines[0].id is string && data.chapterOutlines[0].id.size() >= 1 && data.chapterOutlines[0].id.size() <= 128
+          ))
+        ))
+        && (!('loreSummaries' in data) || (
+          data.loreSummaries is list
+          && data.loreSummaries.size() <= 500
+          && (data.loreSummaries.size() == 0 || (
+            data.loreSummaries[0] is map
+            && data.loreSummaries[0].keys().hasAll(['id', 'name', 'category'])
+            && data.loreSummaries[0].id is string && data.loreSummaries[0].id.size() >= 1 && data.loreSummaries[0].id.size() <= 128
+          ))
+        ))
         && (!('_stubVersion' in data) || (data._stubVersion is string && data._stubVersion.size() <= 40))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -105,109 +349,110 @@ service cloud.firestore {
         && data.imprintName is string && data.imprintName.size() >= 1 && data.imprintName.size() <= 120
         && data.tagline is string && data.tagline.size() <= 240
         && data.description is string && data.description.size() <= 2000
-        && (!('studioLogo' in data) || data.studioLogo is map)
-        && (!('websiteUrl' in data) || (data.websiteUrl is string && data.websiteUrl.size() <= 512))
-        && (!('supportEmail' in data) || (data.supportEmail is string && data.supportEmail.size() <= 320))
+        && (!('studioLogo' in data) || isValidStudioLogo(data.studioLogo))
+        && (!('websiteUrl' in data) || isValidSafeLink(data.websiteUrl, 512))
+        && (!('supportEmail' in data) || isValidEmail(data.supportEmail))
         && (!('headquarters' in data) || (data.headquarters is string && data.headquarters.size() <= 160))
-        && data.authorizedAdminEmails is list && data.authorizedAdminEmails.size() >= 1 && data.authorizedAdminEmails.size() <= 20 && data.authorizedAdminEmails[0] is string
+        && data.authorizedAdminEmails is list
+        && data.authorizedAdminEmails.size() >= 1
+        && data.authorizedAdminEmails.size() <= 20
+        && isValidEmail(data.authorizedAdminEmails[0])
         && data.autoApplyToBookImprint is bool
         && data.autoApplyToTitlePage is bool
         && data.autoApplyToSpine is bool
         && data.updatedAt is timestamp;
     }
 
-    // 4. Collection Rules
+    // 5. Collection Rules (Denial-of-Wallet evaluation order: Auth -> Static -> Relational)
     match /users/{userId} {
-      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow get: if isVerifiedUser()
+        && isValidId(userId)
+        && (isOwner(userId) || isAdmin());
       allow list: if false;
       allow create: if isVerifiedUser()
         && isValidId(userId)
         && isOwner(userId)
-        && isValidUserProfile(incoming(), userId)
+        && 'email' in request.auth.token
+        && incoming().email == request.auth.token.email
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && isValidUserProfile(incoming(), userId);
       allow update: if isVerifiedUser()
         && isValidId(userId)
-        && isValidUserProfile(incoming(), userId)
-        && (isOwner(userId) || isAdmin())
         && incoming().id == existing().id
         && incoming().email == existing().email
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'preferredGenre', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'preferredGenre', 'updatedAt'])
+        && isValidUserProfile(incoming(), userId)
+        && (isOwner(userId) || isAdmin());
       allow delete: if isVerifiedUser()
         && isValidId(userId)
         && (isOwner(userId) || isAdmin());
     }
 
     match /books/{bookId} {
-      allow get: if isSignedIn()
+      allow get: if isVerifiedUser()
         && isValidId(bookId)
         && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn()
+      allow list: if isVerifiedUser()
         && resource.data.userId == request.auth.uid;
       allow create: if isVerifiedUser()
         && isValidId(bookId)
-        && isValidBook(incoming(), bookId)
         && incoming().userId == request.auth.uid
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && isValidBook(incoming(), bookId);
       allow update: if isVerifiedUser()
         && isValidId(bookId)
-        && isValidBook(incoming(), bookId)
-        && (existing().userId == request.auth.uid || isAdmin())
         && incoming().id == existing().id
         && incoming().userId == existing().userId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && (
-          (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
-            'title', 'subtitle', 'author', 'genre', 'tone',
-            'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
-            'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
-            'chapters', 'mediaLibrary', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
-            'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
-            'updatedAt'
-          ])) ||
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
-            'title', 'subtitle', 'author', 'genre', 'tone',
-            'targetWordCount', 'currentWordCount', 'premise', 'targetAudience',
-            'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
-            'chapters', 'mediaLibrary', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
-            'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
-            'updatedAt'
-          ]))
-        );
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'subtitle', 'author', 'genre', 'tone',
+          'targetWordCount', 'currentWordCount', 'dailyWordCountGoal', 'wordGoalMode', 'dailyWordBaselineCount', 'dailyWordBaselineDate',
+          'premise', 'targetAudience',
+          'coverImageUrl', 'coverImage', 'frontCoverImage', 'coverTitleFont', 'coverAccentColor',
+          'chapters', 'mediaLibrary', 'loreEntries', 'publishingKit', 'formattingSettings', 'originalityReport',
+          'isOffloadedToDrive', 'offloadMetadata', 'chapterOutlines', 'loreSummaries', '_stubVersion',
+          'updatedAt'
+        ])
+        && isValidBook(incoming(), bookId)
+        && (existing().userId == request.auth.uid || isAdmin());
       allow delete: if isVerifiedUser()
         && isValidId(bookId)
         && (existing().userId == request.auth.uid || isAdmin());
     }
 
     match /settings/{settingId} {
-      allow get: if isVerifiedUser() && isValidId(settingId) && settingId == 'studio' && isAdmin();
+      allow get: if isVerifiedUser()
+        && isValidId(settingId)
+        && settingId == 'studio'
+        && isAdmin();
       allow list: if false;
       allow create: if isVerifiedUser()
         && isValidId(settingId)
         && settingId == 'studio'
+        && incoming().updatedAt == request.time
         && isValidStudioSettings(incoming())
-        && isAdmin()
-        && incoming().updatedAt == request.time;
+        && isAdmin();
       allow update: if isVerifiedUser()
         && isValidId(settingId)
         && settingId == 'studio'
-        && isValidStudioSettings(incoming())
-        && isAdmin()
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'studioName', 'imprintName', 'tagline', 'description', 'studioLogo',
           'websiteUrl', 'supportEmail', 'headquarters', 'authorizedAdminEmails',
           'autoApplyToBookImprint', 'autoApplyToTitlePage', 'autoApplyToSpine', 'updatedAt'
-        ]);
+        ])
+        && isValidStudioSettings(incoming())
+        && isAdmin();
       allow delete: if false;
     }
 
     match /admins/{adminId} {
-      allow get: if isSignedIn() && isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow get: if isVerifiedUser() && isValidId(adminId) && (isOwner(adminId) || isAdmin());
       allow list, create, update, delete: if false;
     }
 

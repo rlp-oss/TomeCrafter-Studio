@@ -232,6 +232,21 @@ export function createFirestoreMetadataStub(
     genre: (book.genre || "Epic Fantasy") as any,
     targetWordCount: Math.max(0, Math.min(10000000, book.targetWordCount || 50000)),
     currentWordCount: Math.max(0, Math.min(10000000, totalWords || book.currentWordCount || 0)),
+    dailyWordCountGoal:
+      book.dailyWordCountGoal !== undefined && Number(book.dailyWordCountGoal) >= 1
+        ? Math.max(1, Math.min(1000000, Math.round(Number(book.dailyWordCountGoal))))
+        : undefined,
+    wordGoalMode:
+      book.wordGoalMode === "daily" || book.wordGoalMode === "project"
+        ? book.wordGoalMode
+        : undefined,
+    dailyWordBaselineCount:
+      book.dailyWordBaselineCount !== undefined && Number(book.dailyWordBaselineCount) >= 0
+        ? Math.max(0, Math.min(10000000, Math.round(Number(book.dailyWordBaselineCount))))
+        : undefined,
+    dailyWordBaselineDate: book.dailyWordBaselineDate
+      ? String(book.dailyWordBaselineDate).slice(0, 20)
+      : undefined,
     premise: (book.premise || "").slice(0, 8000),
     tone: (book.tone || "Atmospheric and Evocative").slice(0, 240),
     targetAudience: (book.targetAudience || "Adult & Literary Fiction").slice(0, 200),
@@ -258,43 +273,31 @@ export async function executeGoogleDriveOffload(
   const originalBytes = calculateByteSize(book);
   const compression = compressBookForFirestore(book);
 
-  try {
-    const driveUpload = await saveBookArchiveToGoogleDrive(book);
-    const stub = createFirestoreMetadataStub(
-      book,
-      driveUpload,
-      originalBytes,
-      compression.compressedBytes,
-      userId
-    );
-    const stubBytes = calculateByteSize(stub);
+  const driveUpload = await saveBookArchiveToGoogleDrive(book);
+  const stub = createFirestoreMetadataStub(
+    book,
+    driveUpload,
+    originalBytes,
+    compression.compressedBytes,
+    userId
+  );
+  const stubBytes = calculateByteSize(stub);
 
-    await persistBookRecord(book.id, userId, stub as unknown as Record<string, any>);
+  await persistBookRecord(book.id, userId, stub as unknown as Record<string, any>);
 
-    return {
-      success: true,
-      actionTaken: "offloaded_to_drive",
-      driveFileId: driveUpload.fileId,
-      driveWebViewLink: driveUpload.webViewLink,
-      driveFileName: driveUpload.name,
-      originalSizeBytes: originalBytes,
-      originalSizeFormatted: formatBytes(originalBytes),
-      stubSizeBytes: stubBytes,
-      stubSizeFormatted: formatBytes(stubBytes),
-      metadataStub: stub,
-      message: `Payload offloaded to Google Drive (${driveUpload.name}) and metadata stub saved in Firestore.`,
-    };
-  } catch (err: any) {
-    console.error("[DriveOffload Error] Failed offloading book to Google Drive:", err);
-    return {
-      success: false,
-      actionTaken: "failed",
-      originalSizeBytes: originalBytes,
-      originalSizeFormatted: formatBytes(originalBytes),
-      message: `Google Drive offload failed: ${err.message}`,
-      error: err.message,
-    };
-  }
+  return {
+    success: true,
+    actionTaken: "offloaded_to_drive",
+    driveFileId: driveUpload.fileId,
+    driveWebViewLink: driveUpload.webViewLink,
+    driveFileName: driveUpload.name,
+    originalSizeBytes: originalBytes,
+    originalSizeFormatted: formatBytes(originalBytes),
+    stubSizeBytes: stubBytes,
+    stubSizeFormatted: formatBytes(stubBytes),
+    metadataStub: stub,
+    message: `Payload offloaded to Google Drive (${driveUpload.name}) and metadata stub saved in Firestore.`,
+  };
 }
 
 /**
@@ -311,46 +314,34 @@ export async function syncBookWithAutoDriveOffload(
     return await executeGoogleDriveOffload(book, userId);
   }
 
-  try {
-    const compression = compressBookForFirestore(book);
-    const sizeValidation = validateFirestoreDocumentSize(compression.compressedBook);
+  const compression = compressBookForFirestore(book);
+  const sizeValidation = validateFirestoreDocumentSize(compression.compressedBook);
 
-    if (!sizeValidation.valid) {
-      return await executeGoogleDriveOffload(book, userId);
-    }
-
-    await persistBookRecord(book.id, userId, {
-      ...compression.compressedBook,
-      isOffloadedToDrive: false,
-      offloadMetadata: null,
-    });
-
-    if (isGoogleDriveAutoSyncEnabled()) {
-      saveBookArchiveToGoogleDrive(book).catch((driveErr) => {
-        console.warn("[CloudSync] Background Google Drive mirror skipped:", driveErr);
-      });
-    }
-
-    return {
-      success: true,
-      actionTaken: "saved_to_firestore",
-      originalSizeBytes: detection.rawSizeBytes,
-      originalSizeFormatted: detection.rawSizeFormatted,
-      stubSizeBytes: compression.compressedBytes,
-      stubSizeFormatted: formatBytes(compression.compressedBytes),
-      message: `Book minified (${formatBytes(compression.compressedBytes)}) and saved directly to Firestore.`,
-    };
-  } catch (err: any) {
-    console.error("[CloudSync Error] Failed saving book to Firestore:", err);
-    return {
-      success: false,
-      actionTaken: "failed",
-      originalSizeBytes: detection.rawSizeBytes,
-      originalSizeFormatted: detection.rawSizeFormatted,
-      message: `Firestore sync failed: ${err.message}`,
-      error: err.message,
-    };
+  if (!sizeValidation.valid) {
+    return await executeGoogleDriveOffload(book, userId);
   }
+
+  await persistBookRecord(book.id, userId, {
+    ...compression.compressedBook,
+    isOffloadedToDrive: false,
+    offloadMetadata: null,
+  });
+
+  if (isGoogleDriveAutoSyncEnabled()) {
+    saveBookArchiveToGoogleDrive(book).catch((driveErr) => {
+      console.warn("[CloudSync] Background Google Drive mirror skipped:", driveErr);
+    });
+  }
+
+  return {
+    success: true,
+    actionTaken: "saved_to_firestore",
+    originalSizeBytes: detection.rawSizeBytes,
+    originalSizeFormatted: detection.rawSizeFormatted,
+    stubSizeBytes: compression.compressedBytes,
+    stubSizeFormatted: formatBytes(compression.compressedBytes),
+    message: `Book minified (${formatBytes(compression.compressedBytes)}) and saved directly to Firestore.`,
+  };
 }
 
 /**
@@ -366,6 +357,20 @@ export function hydrateBookData(bookId: string, data: Record<string, any>): Book
       genre: data.genre || "Epic Fantasy",
       targetWordCount: data.targetWordCount || 50000,
       currentWordCount: data.currentWordCount || 0,
+      dailyWordCountGoal:
+        typeof data.dailyWordCountGoal === "number" ? data.dailyWordCountGoal : undefined,
+      wordGoalMode:
+        data.wordGoalMode === "daily" || data.wordGoalMode === "project"
+          ? data.wordGoalMode
+          : undefined,
+      dailyWordBaselineCount:
+        typeof data.dailyWordBaselineCount === "number"
+          ? data.dailyWordBaselineCount
+          : undefined,
+      dailyWordBaselineDate:
+        typeof data.dailyWordBaselineDate === "string"
+          ? data.dailyWordBaselineDate
+          : undefined,
       premise: data.premise || "",
       tone: data.tone || "Atmospheric and Evocative",
       targetAudience: data.targetAudience || "Adult & Literary Fiction",

@@ -71,18 +71,15 @@ export async function saveBookToFirestore(
   offloadResult?: OffloadExecutionResult;
   error?: string;
 }> {
-  try {
-    const offloadResult = await syncBookWithAutoDriveOffload(book, userId);
-    return {
-      success: offloadResult.success,
-      actionTaken: offloadResult.actionTaken,
-      offloadResult,
-      error: offloadResult.error,
-    };
-  } catch (err: any) {
-    console.warn("Firestore book sync error:", err);
-    return { success: false, error: err.message };
+  const offloadResult = await syncBookWithAutoDriveOffload(book, userId);
+  if (!offloadResult.success) {
+    throw new Error(offloadResult.error || offloadResult.message || "Failed to save book to Firestore.");
   }
+  return {
+    success: true,
+    actionTaken: offloadResult.actionTaken,
+    offloadResult,
+  };
 }
 
 export async function loadBookFromFirestore(bookId: string): Promise<Book | null> {
@@ -164,21 +161,51 @@ export async function deleteBookFromFirestore(bookId: string): Promise<void> {
 /**
  * Syncs an array of local books to the user's Firestore account.
  */
+export class BatchCloudSyncError extends Error {
+  syncedCount: number;
+  failedCount: number;
+  syncedIds: string[];
+  failures: { bookId: string; title: string; error: string }[];
+
+  constructor(
+    message: string,
+    syncedIds: string[],
+    failures: { bookId: string; title: string; error: string }[]
+  ) {
+    super(message);
+    this.name = "BatchCloudSyncError";
+    this.syncedCount = syncedIds.length;
+    this.failedCount = failures.length;
+    this.syncedIds = syncedIds;
+    this.failures = failures;
+  }
+}
+
 export async function syncAllLocalBooksToCloud(
   books: Book[],
   userId: string
-): Promise<{ syncedCount: number; failedCount: number }> {
-  let syncedCount = 0;
-  let failedCount = 0;
+): Promise<{ syncedCount: number; failedCount: number; syncedIds: string[] }> {
+  const syncedIds: string[] = [];
+  const failures: { bookId: string; title: string; error: string }[] = [];
 
   for (const book of books) {
-    const res = await saveBookToFirestore(book, userId);
-    if (res.success) {
-      syncedCount += 1;
-    } else {
-      failedCount += 1;
+    try {
+      await saveBookToFirestore(book, userId);
+      syncedIds.push(book.id);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[CloudSync] Failed syncing book "${book.title}" (${book.id}):`, err);
+      failures.push({ bookId: book.id, title: book.title, error: msg });
     }
   }
 
-  return { syncedCount, failedCount };
+  if (failures.length > 0) {
+    throw new BatchCloudSyncError(
+      `Failed to sync ${failures.length} of ${books.length} manuscript(s) to Firestore.`,
+      syncedIds,
+      failures
+    );
+  }
+
+  return { syncedCount: syncedIds.length, failedCount: 0, syncedIds };
 }

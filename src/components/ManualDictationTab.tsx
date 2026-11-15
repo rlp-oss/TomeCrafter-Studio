@@ -58,7 +58,7 @@ export const ManualDictationTab: React.FC<ManualDictationTabProps> = ({
   const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState<boolean>(false);
 
   const recognitionRef = useRef<any>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Initialize Web Speech API
   useEffect(() => {

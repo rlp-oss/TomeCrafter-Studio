@@ -163,7 +163,7 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
 
   // Reel Simulation Loop
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (isPlaying && currentReel.scenes.length > 0) {
       interval = setInterval(() => {
         setSceneElapsedTime((prev) => {
@@ -189,7 +189,7 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
 
   // Teleprompter Auto-Scroll Loop
   useEffect(() => {
-    let scrollInterval: NodeJS.Timeout;
+    let scrollInterval: ReturnType<typeof setInterval>;
     if (isTeleprompterRunning && teleprompterContainerRef.current) {
       scrollInterval = setInterval(() => {
         if (teleprompterContainerRef.current) {
@@ -202,7 +202,7 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ book, onUp
 
   // Mic Recording Timer
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setInterval>;
     if (isMicRecording) {
       timer = setInterval(() => {
         setRecordSeconds((s) => s + 1);

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["server.ts", "vite.config.ts", "firestore.rules.test.ts"],
+  "exclude": ["dist", "node_modules", "**/node_modules/*"]
+}

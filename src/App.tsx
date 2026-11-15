@@ -6,6 +6,7 @@ import { ManualDictationTab } from "./components/ManualDictationTab";
 import { AudiobookStudioTab } from "./components/AudiobookStudioTab";
 import { TypographyCustomizerTab } from "./components/TypographyCustomizerTab";
 import { RealmCouncil } from "./components/RealmCouncil";
+import { PublishingStudioHQ } from "./components/PublishingStudioHQ";
 import { LoreCodex } from "./components/LoreCodex";
 import { ArtStudio } from "./components/ArtStudio";
 import { AutoTypesetting } from "./components/AutoTypesetting";
@@ -22,6 +23,11 @@ import { LandingPage } from "./components/LandingPage";
 import { ProjectHubModal } from "./components/ProjectHubModal";
 import { AuthModal } from "./components/AuthModal";
 import { AutoSaveIndicator, SaveStatus } from "./components/AutoSaveIndicator";
+import {
+  FooterWordGoalBar,
+  countBookWords,
+  getLocalDateKey,
+} from "./components/FooterWordGoalBar";
 import { Book } from "./types";
 import { SAMPLE_BOOKS } from "./data/sampleBooks";
 import {
@@ -42,6 +48,7 @@ import {
   validateFirestoreConnection,
   onAuthUserChanged,
   syncUserProfileToFirestore,
+  ensureAppCheckReady,
 } from "./services/firebase";
 import {
   saveBookToFirestore,
@@ -49,11 +56,25 @@ import {
   deleteBookFromFirestore,
   syncAllLocalBooksToCloud,
   clearKnownCloudBooks,
+  BatchCloudSyncError,
 } from "./services/bookCloudSync";
 import { User as FirebaseUser } from "firebase/auth";
 
 const STORAGE_KEY = "tomecrafter_books_v1";
 const AUTO_SAVE_STORAGE_KEY = "tomecrafter_autosave_enabled_v1";
+
+function extractReadableSaveError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err || "Unknown error");
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
+      return parsed.error.trim();
+    }
+  } catch {
+    // Non-JSON error message
+  }
+  return raw;
+}
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
@@ -63,6 +84,7 @@ export default function App() {
   const hasMigratedInitialLocalRef = useRef<string | null>(null);
   const booksRef = useRef<Book[]>([]);
   const dirtyBookIdsRef = useRef<Set<string>>(new Set());
+  const isManualSavingRef = useRef<boolean>(false);
 
   // Save & Auto-Save Control State (Auto-Save defaults to OFF)
   const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(() => {
@@ -146,7 +168,7 @@ export default function App() {
   const [activeBookId, setActiveBookId] = useState<string>(
     books[0] ? books[0].id : SAMPLE_BOOKS[0].id
   );
-  const [activeTab, setActiveTab] = useState<ActiveTab>("outline");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("studio");
   const [activeChapterIdForEditor, setActiveChapterIdForEditor] = useState<string | undefined>(
     undefined
   );
@@ -159,21 +181,28 @@ export default function App() {
   const [showGoogleDriveModal, setShowGoogleDriveModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [pendingDeleteBook, setPendingDeleteBook] = useState<Book | null>(null);
-  const [uiNotice, setUiNotice] = useState<string | null>(null);
+  const [uiNotice, setUiNotice] = useState<{
+    message: string;
+    type: "success" | "error" | "info";
+  } | null>(null);
 
   useEffect(() => {
     booksRef.current = books;
   }, [books]);
 
-  const showTemporaryNotice = (message: string) => {
-    setUiNotice(message);
+  const showTemporaryNotice = (
+    message: string,
+    type: "success" | "error" | "info" = "info"
+  ) => {
+    setUiNotice({ message, type });
     setTimeout(() => {
-      setUiNotice((prev) => (prev === message ? null : prev));
-    }, 3500);
+      setUiNotice((prev) => (prev?.message === message ? null : prev));
+    }, 4000);
   };
 
-  // Test Firestore Connection on Boot
+  // Initialize Firebase App Check (if runtime-configured) & Test Firestore Connection on Boot
   useEffect(() => {
+    void ensureAppCheckReady();
     validateFirestoreConnection().then((connected) => {
       if (connected) {
         console.log("Firestore database connection verified.");
@@ -223,6 +252,20 @@ export default function App() {
             setIsSyncingCloud(true);
             try {
               await syncAllLocalBooksToCloud(localBooks, uid);
+            } catch (err) {
+              console.error("Initial cloud migration failed:", err);
+              if (err instanceof BatchCloudSyncError && err.syncedIds.length > 0) {
+                setCloudSyncedIds((prev) => {
+                  const next = new Set(prev);
+                  err.syncedIds.forEach((id) => next.add(id));
+                  return next;
+                });
+              }
+              setSaveStatus("error");
+              showTemporaryNotice(
+                `Cloud migration failed: ${extractReadableSaveError(err)}`,
+                "error"
+              );
             } finally {
               setIsSyncingCloud(false);
             }
@@ -238,6 +281,20 @@ export default function App() {
               setIsSyncingCloud(true);
               try {
                 await syncAllLocalBooksToCloud(nonSampleLocal, uid);
+              } catch (err) {
+                console.error("Local draft cloud sync failed:", err);
+                if (err instanceof BatchCloudSyncError && err.syncedIds.length > 0) {
+                  setCloudSyncedIds((prev) => {
+                    const next = new Set(prev);
+                    err.syncedIds.forEach((id) => next.add(id));
+                    return next;
+                  });
+                }
+                setSaveStatus("error");
+                showTemporaryNotice(
+                  `Cloud sync failed for local drafts: ${extractReadableSaveError(err)}`,
+                  "error"
+                );
               } finally {
                 setIsSyncingCloud(false);
               }
@@ -276,56 +333,73 @@ export default function App() {
   }, [isAuthReady, currentUser]);
 
   const handleManualSave = async () => {
+    if (isManualSavingRef.current) return;
+    isManualSavingRef.current = true;
     const latestBooks = booksRef.current;
     setSaveStatus("saving");
+
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(latestBooks));
-    } catch (e) {
-      console.error("Failed to save books to localStorage", e);
-      setSaveStatus("error");
-      showTemporaryNotice("Could not save changes to browser storage.");
-      return;
-    }
-
-    const formattedTime = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-
-    if (isAuthReady && currentUser) {
-      const idsToSave =
-        dirtyBookIdsRef.current.size > 0
-          ? Array.from(dirtyBookIdsRef.current)
-          : [activeBookId];
-      let allOk = true;
-      for (const id of idsToSave) {
-        const target = latestBooks.find((b) => b.id === id);
-        if (!target) continue;
-        const res = await saveBookToFirestore(target, currentUser.uid);
-        if (res.success) {
-          dirtyBookIdsRef.current.delete(id);
-          setCloudSyncedIds((prev) => {
-            const next = new Set(prev);
-            next.add(target.id);
-            return next;
-          });
-        } else {
-          allOk = false;
-        }
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(latestBooks));
+      } catch (e) {
+        console.error("Failed to save books to localStorage", e);
+        setSaveStatus("error");
+        showTemporaryNotice("Could not save changes to browser storage.", "error");
+        return;
       }
-      setLastSavedTime(formattedTime);
-      setSaveStatus(allOk ? "saved" : "error");
-      showTemporaryNotice(
-        allOk ? "Changes saved locally and synced to cloud." : "Saved locally, but cloud sync encountered an error."
-      );
-      return;
-    }
 
-    dirtyBookIdsRef.current.clear();
-    setLastSavedTime(formattedTime);
-    setSaveStatus("saved");
-    showTemporaryNotice("Changes saved locally.");
+      const formattedTime = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+      if (isAuthReady && currentUser) {
+        const idsToSave =
+          dirtyBookIdsRef.current.size > 0
+            ? Array.from(dirtyBookIdsRef.current)
+            : [activeBookId];
+
+        const syncErrors: string[] = [];
+        for (const id of idsToSave) {
+          const target = latestBooks.find((b) => b.id === id);
+          if (!target) continue;
+          try {
+            await saveBookToFirestore(target, currentUser.uid);
+            dirtyBookIdsRef.current.delete(id);
+            setCloudSyncedIds((prev) => {
+              const next = new Set(prev);
+              next.add(target.id);
+              return next;
+            });
+          } catch (err) {
+            console.error(`Failed saving book "${target.title}" (${id}) to cloud:`, err);
+            syncErrors.push(extractReadableSaveError(err));
+          }
+        }
+
+        if (syncErrors.length > 0) {
+          setSaveStatus("error");
+          showTemporaryNotice(
+            `Saved locally, but cloud sync failed: ${syncErrors[0]}`,
+            "error"
+          );
+          return;
+        }
+
+        setLastSavedTime(formattedTime);
+        setSaveStatus("saved");
+        showTemporaryNotice("Changes saved locally and synced to cloud.", "success");
+        return;
+      }
+
+      dirtyBookIdsRef.current.clear();
+      setLastSavedTime(formattedTime);
+      setSaveStatus("saved");
+      showTemporaryNotice("Changes saved locally.", "success");
+    } finally {
+      isManualSavingRef.current = false;
+    }
   };
 
   const handleToggleAutoSave = () => {
@@ -378,8 +452,8 @@ export default function App() {
       if (isAuthReady && currentUser) {
         const active = booksRef.current.find((b) => b.id === activeBookId);
         if (active && dirtyBookIdsRef.current.has(active.id)) {
-          const res = await saveBookToFirestore(active, currentUser.uid);
-          if (res.success) {
+          try {
+            await saveBookToFirestore(active, currentUser.uid);
             dirtyBookIdsRef.current.delete(active.id);
             setCloudSyncedIds((prev) => {
               const next = new Set(prev);
@@ -388,8 +462,13 @@ export default function App() {
             });
             setLastSavedTime(formattedTime);
             setSaveStatus("saved");
-          } else {
+          } catch (err) {
+            console.error("Auto-save cloud sync failed:", err);
             setSaveStatus("error");
+            showTemporaryNotice(
+              `Auto-save cloud sync failed: ${extractReadableSaveError(err)}`,
+              "error"
+            );
           }
           return;
         }
@@ -408,7 +487,36 @@ export default function App() {
     setIsSyncingCloud(true);
     try {
       const result = await syncAllLocalBooksToCloud(books, currentUser.uid);
-      showTemporaryNotice(`Synced ${result.syncedCount} manuscript(s) to Firebase Cloud.`);
+      setCloudSyncedIds((prev) => {
+        const next = new Set(prev);
+        result.syncedIds.forEach((id) => next.add(id));
+        return next;
+      });
+      dirtyBookIdsRef.current.clear();
+      setLastSavedTime(
+        new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      );
+      setSaveStatus("saved");
+      showTemporaryNotice(
+        `Synced ${result.syncedCount} manuscript(s) to Firebase Cloud.`,
+        "success"
+      );
+    } catch (err) {
+      if (err instanceof BatchCloudSyncError && err.syncedIds.length > 0) {
+        setCloudSyncedIds((prev) => {
+          const next = new Set(prev);
+          err.syncedIds.forEach((id) => next.add(id));
+          return next;
+        });
+      }
+      setSaveStatus("error");
+      const readableError = extractReadableSaveError(err);
+      showTemporaryNotice(`Cloud sync failed: ${readableError}`, "error");
+      throw new Error(readableError);
     } finally {
       setIsSyncingCloud(false);
     }
@@ -420,11 +528,29 @@ export default function App() {
   const handleUpdateBook = (updatedBook: Book) => {
     dirtyBookIdsRef.current.add(updatedBook.id);
     setSaveStatus("unsaved");
-    const timestampedBook = {
-      ...updatedBook,
-      updatedAt: new Date().toISOString(),
-    };
-    setBooks((prev) => prev.map((b) => (b.id === timestampedBook.id ? timestampedBook : b)));
+    const todayKey = getLocalDateKey();
+    const nowIso = new Date().toISOString();
+
+    setBooks((prev) =>
+      prev.map((b) => {
+        if (b.id !== updatedBook.id) return b;
+        let nextBook: Book = {
+          ...updatedBook,
+          updatedAt: nowIso,
+        };
+        if (
+          (nextBook.dailyWordCountGoal || nextBook.wordGoalMode === "daily") &&
+          nextBook.dailyWordBaselineDate !== todayKey
+        ) {
+          nextBook = {
+            ...nextBook,
+            dailyWordBaselineDate: todayKey,
+            dailyWordBaselineCount: countBookWords(b),
+          };
+        }
+        return nextBook;
+      })
+    );
   };
 
   const handleSelectBook = (bookId: string) => {
@@ -616,9 +742,13 @@ export default function App() {
           next.delete(targetId);
           return next;
         });
-        showTemporaryNotice(`Deleted "${pendingDeleteBook.title}" from studio and cloud.`);
+        showTemporaryNotice(`Deleted "${pendingDeleteBook.title}" from studio and cloud.`, "success");
       } catch (err) {
-        console.warn("Could not delete book from Firestore:", err);
+        console.error("Could not delete book from Firestore:", err);
+        showTemporaryNotice(
+          `Removed locally, but cloud delete failed: ${extractReadableSaveError(err)}`,
+          "error"
+        );
       }
     }
   };
@@ -695,6 +825,16 @@ export default function App() {
 
       {/* Main Workspace Stage */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        {activeTab === "studio" && (
+          <PublishingStudioHQ
+            book={activeBook}
+            onUpdateBook={handleUpdateBook}
+            onSelectTab={setActiveTab}
+            onNavigateToEditor={handleNavigateToEditor}
+            onOpenExportModal={() => setShowExportModal(true)}
+          />
+        )}
+
         {activeTab === "outline" && (
           <ChapterBuilder
             book={activeBook}
@@ -831,69 +971,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Center Section: Real-Time Word Count Progress Bar */}
-        {(() => {
-          const currentWords = (activeBook.chapters || []).reduce(
-            (acc, ch) => acc + (ch.content ? ch.content.trim().split(/\s+/).filter(Boolean).length : 0),
-            0
-          );
-          const targetWords = activeBook.targetWordCount || 60000;
-          const percentage = Math.min(100, Math.round((currentWords / targetWords) * 100));
-          const estPages = Math.max(1, Math.round(currentWords / 250));
-          const remainingWords = Math.max(0, targetWords - currentWords);
-
-          return (
-            <div className="w-full lg:max-w-md xl:max-w-lg bg-stone-900/90 border border-stone-800/90 rounded-xl px-3.5 py-2 flex flex-col space-y-1.5 shadow-inner">
-              <div className="flex items-center justify-between text-[11px]">
-                <div className="flex items-center space-x-1.5 font-medium">
-                  <span className="text-amber-400 font-mono font-bold">
-                    {currentWords.toLocaleString()}
-                  </span>
-                  <span className="text-stone-500">/</span>
-                  <span className="text-stone-400 font-mono">
-                    {targetWords.toLocaleString()} words
-                  </span>
-                  <span className="text-[10px] text-stone-500 font-sans hidden sm:inline">
-                    (~{estPages} pages)
-                  </span>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  {remainingWords > 0 ? (
-                    <span className="text-[10px] text-stone-500 hidden sm:inline">
-                      {remainingWords.toLocaleString()} to goal
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-emerald-400 font-bold hidden sm:inline">
-                      Goal Reached!
-                    </span>
-                  )}
-                  <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full border ${
-                    percentage >= 100
-                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                      : percentage >= 50
-                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                      : "bg-stone-800 text-stone-300 border-stone-700"
-                  }`}>
-                    {percentage}%
-                  </span>
-                </div>
-              </div>
-
-              {/* Visual Progress Bar Track & Fill */}
-              <div className="relative w-full h-2 rounded-full bg-stone-800 overflow-hidden border border-stone-700/50">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    percentage >= 100
-                      ? "bg-gradient-to-r from-emerald-500 to-teal-400 shadow-sm shadow-emerald-500/50"
-                      : "bg-gradient-to-r from-amber-500 via-amber-400 to-emerald-400"
-                  }`}
-                  style={{ width: `${percentage}%` }}
-                />
-              </div>
-            </div>
-          );
-        })()}
+        {/* Center Section: Interactive Real-Time Word Count Progress Bar */}
+        <FooterWordGoalBar book={activeBook} onUpdateBook={handleUpdateBook} />
 
         {/* Right Section: Save Status & Actions */}
         <div className="flex items-center space-x-3 text-stone-400 shrink-0 w-full lg:w-auto justify-between lg:justify-end">
@@ -1027,9 +1106,25 @@ export default function App() {
 
       {/* Non-blocking UI Toast Notice */}
       {uiNotice && (
-        <div className="fixed bottom-20 right-6 z-50 flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-stone-900 border border-amber-500/40 text-stone-100 text-xs shadow-xl">
-          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-          <span>{uiNotice}</span>
+        <div
+          className={`fixed bottom-20 right-6 z-50 flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-stone-900 border text-stone-100 text-xs shadow-xl ${
+            uiNotice.type === "error"
+              ? "border-rose-500/50 text-rose-100"
+              : uiNotice.type === "success"
+              ? "border-emerald-500/40"
+              : "border-amber-500/40"
+          }`}
+        >
+          {uiNotice.type === "error" ? (
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          ) : (
+            <CheckCircle2
+              className={`w-4 h-4 shrink-0 ${
+                uiNotice.type === "success" ? "text-emerald-400" : "text-amber-400"
+              }`}
+            />
+          )}
+          <span>{uiNotice.message}</span>
         </div>
       )}
     </div>

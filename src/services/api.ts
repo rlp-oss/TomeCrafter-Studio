@@ -19,17 +19,27 @@ import {
   FeedbackItem,
   BroadcastMessage,
   AuthorWebsiteConfig,
+  DepartmentId,
+  StudioApplyActionType,
+  StudioDeliverableResult,
 } from "../types";
 
 export const apiService = {
-  // Send message to Realm Master agent
+  // Send message to Realm Master or Department Staff Specialist
   async chatWithAgent(params: {
     agentId: AgentId;
+    staffAgent?: {
+      id: string;
+      name: string;
+      role: string;
+      departmentName: string;
+      systemGuidance: string;
+    };
     message: string;
     bookContext?: Partial<Book>;
     chapterContext?: Partial<Chapter>;
     chatHistory?: { role: "user" | "agent"; text: string }[];
-  }): Promise<{ text: string; agentId: AgentId }> {
+  }): Promise<{ text: string; agentId: AgentId; staffId?: string }> {
     const res = await fetch("/api/agents/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38,6 +48,34 @@ export const apiService = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `HTTP error ${res.status}`);
+    }
+    return res.json();
+  },
+
+  // Publishing Studio: Run Specialist Department Task
+  async runStudioDepartmentTask(params: {
+    departmentId: DepartmentId;
+    departmentName: string;
+    staffId: string;
+    staffName: string;
+    staffRole: string;
+    staffGuidance: string;
+    taskId: string;
+    taskLabel: string;
+    taskDescription: string;
+    applyActionType?: StudioApplyActionType;
+    customBrief?: string;
+    bookContext: Record<string, any>;
+    chapterContext?: Partial<Chapter> | null;
+  }): Promise<StudioDeliverableResult> {
+    const res = await fetch("/api/studio/run-department-task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to run department task (${res.status}).`);
     }
     return res.json();
   },

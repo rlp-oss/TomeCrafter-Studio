@@ -19,11 +19,13 @@
         },
         "displayName": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 120
         },
         "photoURL": {
           "type": "string",
-          "maxLength": 2048
+          "maxLength": 2048,
+          "pattern": "^https?://.+"
         },
         "preferredGenre": {
           "type": "string",
@@ -85,6 +87,21 @@
         },
         "currentWordCount": {
           "type": "number"
+        },
+        "dailyWordCountGoal": {
+          "type": "number"
+        },
+        "wordGoalMode": {
+          "type": "string",
+          "enum": ["project", "daily"],
+          "maxLength": 16
+        },
+        "dailyWordBaselineCount": {
+          "type": "number"
+        },
+        "dailyWordBaselineDate": {
+          "type": "string",
+          "maxLength": 20
         },
         "premise": {
           "type": "string",

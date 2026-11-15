@@ -412,6 +412,21 @@ export function compressBookForFirestore(
     genre: safeGenre,
     targetWordCount: Math.max(0, Math.min(10000000, Number(rawCopy.targetWordCount) || 50000)),
     currentWordCount: Math.max(0, Math.min(10000000, Number(totalWordsInChapters || rawCopy.currentWordCount) || 0)),
+    dailyWordCountGoal:
+      rawCopy.dailyWordCountGoal !== undefined && Number(rawCopy.dailyWordCountGoal) >= 1
+        ? Math.max(1, Math.min(1000000, Math.round(Number(rawCopy.dailyWordCountGoal))))
+        : undefined,
+    wordGoalMode:
+      rawCopy.wordGoalMode === "daily" || rawCopy.wordGoalMode === "project"
+        ? rawCopy.wordGoalMode
+        : undefined,
+    dailyWordBaselineCount:
+      rawCopy.dailyWordBaselineCount !== undefined && Number(rawCopy.dailyWordBaselineCount) >= 0
+        ? Math.max(0, Math.min(10000000, Math.round(Number(rawCopy.dailyWordBaselineCount))))
+        : undefined,
+    dailyWordBaselineDate: rawCopy.dailyWordBaselineDate
+      ? String(rawCopy.dailyWordBaselineDate).slice(0, 20)
+      : undefined,
     premise: stripRedundantWhitespace(rawCopy.premise || "").slice(0, 8000),
     tone: stripRedundantWhitespace(rawCopy.tone || "").slice(0, 240),
     targetAudience: rawCopy.targetAudience ? stripRedundantWhitespace(rawCopy.targetAudience).slice(0, 200) : undefined,
@@ -490,6 +505,20 @@ export function decompressBookFromFirestore(docData: Record<string, any>): Book 
     genre: docData.genre || "Epic Fantasy",
     targetWordCount: docData.targetWordCount || 50000,
     currentWordCount: docData.currentWordCount || 0,
+    dailyWordCountGoal:
+      typeof docData.dailyWordCountGoal === "number" ? docData.dailyWordCountGoal : undefined,
+    wordGoalMode:
+      docData.wordGoalMode === "daily" || docData.wordGoalMode === "project"
+        ? docData.wordGoalMode
+        : undefined,
+    dailyWordBaselineCount:
+      typeof docData.dailyWordBaselineCount === "number"
+        ? docData.dailyWordBaselineCount
+        : undefined,
+    dailyWordBaselineDate:
+      typeof docData.dailyWordBaselineDate === "string"
+        ? docData.dailyWordBaselineDate
+        : undefined,
     premise: docData.premise || "",
     tone: docData.tone || "Atmospheric and Evocative",
     targetAudience: docData.targetAudience || "Adult & Literary Fiction",
