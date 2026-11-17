@@ -302,7 +302,7 @@ export interface AudiobookSettings {
 
 export const DEFAULT_AUDIOBOOK_SETTINGS: AudiobookSettings = {
   selectedVoiceId: "arthur-sterling",
-  voiceEngine: "gemini",
+  voiceEngine: "browser",
   playbackSpeed: 1.0,
   pitchModifier: 1.0,
   pauseBetweenParagraphsMs: 400,
@@ -614,65 +614,7 @@ export async function auditionVoicePresetWithAI(
 ): Promise<{ audio?: HTMLAudioElement; duration: number }> {
   if (onStart) onStart();
 
-  console.log(`[AudiobookStudio Audition] Starting audition: "${preset.name}" (${preset.gender}), Engine: "${settings.voiceEngine}"`, {
-    presetId: preset.id,
-    geminiVoice: preset.geminiVoice,
-    elevenLabsVoiceId: preset.elevenLabsVoiceId,
-  });
-
-  if (settings.voiceEngine !== "browser") {
-    try {
-      const response = await fetch("/api/audio/audition", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          presetId: preset.id,
-          customGreeting: preset.introGreeting,
-          engine: settings.voiceEngine || "gemini",
-          elevenLabsApiKey: settings.elevenLabsApiKey,
-          elevenLabsVoiceId: preset.elevenLabsVoiceId,
-          geminiVoiceName: preset.geminiVoice,
-          actingPrompt: preset.actingDirection,
-        }),
-      });
-
-      console.log(`[AudiobookStudio Audition] Response status: ${response.status}`);
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`[AudiobookStudio Audition] Response data:`, {
-          success: data.success,
-          engine: data.engine,
-          hasAudio: !!data.audioBase64,
-          mimeType: data.mimeType,
-        });
-
-        if (data.audioBase64) {
-          const blob = base64ToBlob(data.audioBase64, data.mimeType || "audio/wav");
-          const audioUrl = URL.createObjectURL(blob);
-          const audio = new Audio(audioUrl);
-
-          audio.onended = () => {
-            if (onEnd) onEnd();
-          };
-
-          audio.onerror = () => {
-            if (onEnd) onEnd();
-          };
-
-          await audio.play();
-          return { audio, duration: audio.duration || 4 };
-        }
-      }
-    } catch (err: any) {
-      console.warn("[AudiobookStudio Audition] AI Audition API error, falling back to local speech:", err.message);
-    }
-  }
-
-  // Fallback to high-quality browser Web Speech API
-  console.log(`[AudiobookStudio Audition] Auditioning via browser Web Speech API.`);
+  // Zero-Cost Local Mode: Always use free browser Web Speech API (paid Gemini/ElevenLabs TTS disabled)
   if (typeof window !== "undefined" && window.speechSynthesis) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(preset.introGreeting);
@@ -716,93 +658,12 @@ export async function generateSyntheticAudioTrack(
   settings: AudiobookSettings,
   onProgress?: (percent: number, currentChunk: string) => void
 ): Promise<{ blob?: Blob; url?: string; durationSeconds: number; engineUsed: string }> {
-  // Approximate speech duration based on word count & rate
   const words = text.trim().split(/\s+/).filter(Boolean);
   const effectiveWPM = 145 * (settings.playbackSpeed * voicePreset.rate);
   const estimatedSeconds = Math.max(3, Math.round((words.length / effectiveWPM) * 60));
 
-  console.log(`[AudiobookStudio Synthesis] Starting track synthesis: ${words.length} words, Voice: ${voicePreset.name} (${voicePreset.gender}), Engine: ${settings.voiceEngine}`);
-
   if (onProgress) {
-    onProgress(20, `Preparing ${settings.voiceEngine === "elevenlabs" ? "ElevenLabs" : settings.voiceEngine === "browser" ? "Device Voice" : "Studio Neural"} Engine...`);
-  }
-
-  // If AI Engine is selected (Gemini or ElevenLabs), attempt server synthesis
-  if (settings.voiceEngine !== "browser") {
-    try {
-      if (onProgress) {
-        onProgress(45, `Synthesizing with ${voicePreset.name} (${voicePreset.badge})...`);
-      }
-
-      console.log(`[AudiobookStudio Synthesis] POST /api/audio/tts payload dispatch:`, {
-        presetId: voicePreset.id,
-        geminiVoiceName: voicePreset.geminiVoice,
-        engine: settings.voiceEngine,
-        elevenLabsVoiceId: voicePreset.elevenLabsVoiceId,
-        textChars: text.length,
-      });
-
-      const response = await fetch("/api/audio/tts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text,
-          presetId: voicePreset.id,
-          geminiVoiceName: voicePreset.geminiVoice,
-          actingPrompt: voicePreset.actingDirection,
-          engine: settings.voiceEngine,
-          elevenLabsApiKey: settings.elevenLabsApiKey,
-          elevenLabsVoiceId: voicePreset.elevenLabsVoiceId,
-        }),
-      });
-
-      console.log(`[AudiobookStudio Synthesis] Response HTTP status: ${response.status}`);
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`[AudiobookStudio Synthesis] Response JSON:`, {
-          success: data.success,
-          engine: data.engine,
-          hasAudio: !!data.audioBase64,
-          mimeType: data.mimeType,
-          chunksCount: data.chunksCount,
-        });
-
-        if (data.audioBase64) {
-          if (onProgress) {
-            onProgress(85, "Mastering audio track...");
-          }
-
-          const blob = base64ToBlob(data.audioBase64, data.mimeType || "audio/wav");
-          const url = URL.createObjectURL(blob);
-          const measuredDuration = await getAudioBlobDuration(blob);
-
-          console.log(`[AudiobookStudio Synthesis] Master audio generated: ${blob.size} bytes, measured duration: ${measuredDuration}s`);
-
-          if (onProgress) {
-            onProgress(100, "Audio track ready!");
-          }
-
-          return {
-            blob,
-            url,
-            durationSeconds: measuredDuration > 0 ? measuredDuration : estimatedSeconds,
-            engineUsed: data.engine || settings.voiceEngine,
-          };
-        }
-      } else {
-        const errJson = await response.json().catch(() => ({}));
-        console.warn("[AudiobookStudio Synthesis] Server returned error response:", errJson);
-      }
-    } catch (apiError: any) {
-      console.warn("[AudiobookStudio Synthesis] AI TTS server synthesis error:", apiError.message);
-    }
-  }
-
-  if (onProgress) {
-    onProgress(100, "Ready for high-quality device voice narration.");
+    onProgress(100, "Ready for free device voice narration (Zero-Cost Mode).");
   }
 
   return {

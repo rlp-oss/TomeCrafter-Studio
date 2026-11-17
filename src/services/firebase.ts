@@ -1,78 +1,43 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut,
-  onAuthStateChanged,
-  User as FirebaseUser,
-} from "firebase/auth";
-import {
-  getFirestore,
-  doc,
-  setDoc,
-  updateDoc,
-  getDoc,
-  getDocFromServer,
-  serverTimestamp,
-} from "firebase/firestore";
-import {
-  getStorage,
-  ref as storageRef,
-  uploadBytes,
-  uploadBytesResumable,
-  getDownloadURL,
-  deleteObject,
-  StorageReference,
-  UploadTask,
-} from "firebase/storage";
-import firebaseConfigJson from "../../firebase-applet-config.json";
-import {
-  initializeFirebaseAppCheck,
-  ensureFirebaseAppCheckInitialized,
-} from "./appCheckConfig";
+// Zero-Cost Local Mode: All Firebase SDK (Firestore, Auth, Storage, App Check) calls removed
+// to prevent database/storage/network billing. Projects and studio settings persist locally in browser storage.
 
-// Initialize Firebase App
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfigJson);
+export interface FirebaseUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  emailVerified: boolean;
+  isAnonymous?: boolean;
+  tenantId?: string | null;
+  photoURL?: string | null;
+  providerData?: { providerId?: string | null; email?: string | null }[];
+}
 
-// Synchronously initialize Firebase App Check if a valid build-time site key is configured
-export const appCheck = initializeFirebaseAppCheck(app);
+export type StorageReference = { fullPath: string };
+export type UploadTask = { cancel: () => void };
 
-// Async fallback for runtime-injected VITE_FIREBASE_APP_CHECK_SITE_KEY secrets
-export const ensureAppCheckReady = () => ensureFirebaseAppCheckInitialized(app);
+export const appCheck = null;
+export const ensureAppCheckReady = async (): Promise<null> => null;
 
-export const auth = getAuth(app);
-const databaseId = (firebaseConfigJson as any).firestoreDatabaseId || "(default)";
-export const db = getFirestore(app, databaseId === "(default)" ? undefined : databaseId);
-export const storage = getStorage(app);
-
-// Export storage helpers
-export {
-  storageRef,
-  uploadBytes,
-  uploadBytesResumable,
-  getDownloadURL,
-  deleteObject,
+export const auth: { currentUser: FirebaseUser | null } = {
+  currentUser: null,
 };
-export type { StorageReference, UploadTask };
+export const db: unknown = null;
+export const storage: unknown = null;
 
-// Standard Google Auth Provider for user sign-in
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({
-  prompt: "select_account",
+export const storageRef = (_storage: unknown, path: string): StorageReference => ({
+  fullPath: path,
 });
+export const uploadBytes = async () => {
+  throw new Error("Cloud storage is disabled in Zero-Cost Local Mode.");
+};
+export const uploadBytesResumable = () => {
+  throw new Error("Cloud storage is disabled in Zero-Cost Local Mode.");
+};
+export const getDownloadURL = async () => "";
+export const deleteObject = async () => {};
 
-// Separate Google Auth Provider requesting Drive access only when explicitly needed
-export const googleDriveProvider = new GoogleAuthProvider();
-googleDriveProvider.addScope("https://www.googleapis.com/auth/drive.file");
-googleDriveProvider.setCustomParameters({
-  prompt: "select_account",
-});
-
-// In-memory Drive access token cache (never persisted to localStorage)
 let cachedGoogleAccessToken: string | null = null;
 
-// Firestore Error Handling per Firebase Integration Specification
 export enum OperationType {
   CREATE = "create",
   UPDATE = "update",
@@ -99,108 +64,59 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
-        })) || [],
+      userId: null,
+      email: null,
+      emailVerified: false,
+      isAnonymous: false,
+      tenantId: null,
+      providerInfo: [],
     },
     operationType,
     path,
   };
-  console.error("Firestore Error: ", JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Test Firestore connection on boot
 export async function validateFirestoreConnection(): Promise<boolean> {
-  try {
-    await getDocFromServer(doc(db, "test", "connection"));
-    return true;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.error("Please check your Firebase configuration: client is offline.");
-      return false;
-    }
-    // A permission-denied response still confirms server reachability
-    return true;
-  }
+  return false;
 }
 
-// Human-friendly Firebase Auth error translator
 export function getFriendlyAuthErrorMessage(error: unknown): string {
-  const code = (error as any)?.code || "";
-  const msg = (error as any)?.message || "";
-
-  switch (code) {
-    case "auth/popup-blocked":
-      return "Your browser blocked the sign-in popup. Please allow popups for this site and try again.";
-    case "auth/popup-closed-by-user":
-      return "The sign-in window was closed before completing. Click Sign In whenever you're ready.";
-    case "auth/cancelled-popup-request":
-      return "Sign-in was superseded by another request. Please try again.";
-    case "auth/network-request-failed":
-      return "Network connection error. Please check your internet connection and retry.";
-    case "auth/unauthorized-domain":
-      return "This domain is not yet authorized in Firebase Authentication settings.";
-    case "auth/user-disabled":
-      return "This account has been disabled. Please contact support.";
-    default:
-      return msg || "Unable to complete sign-in. Please try again.";
-  }
+  return error instanceof Error
+    ? error.message
+    : "Cloud authentication is disabled in Zero-Cost Local Mode.";
 }
 
-// Standard Google Sign-In
 export async function signInWithGoogle(): Promise<{ user: FirebaseUser; accessToken?: string }> {
-  try {
-    const result = await signInWithPopup(auth, googleProvider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      cachedGoogleAccessToken = credential.accessToken;
-    }
-    return { user: result.user, accessToken: credential?.accessToken };
-  } catch (error) {
-    console.error("Error signing in with Google:", error);
-    throw new Error(getFriendlyAuthErrorMessage(error));
-  }
+  throw new Error(
+    "Cloud sign-in and Firestore sync are disabled in Zero-Cost Local Mode. Manuscripts are saved locally in your browser."
+  );
 }
 
-// Explicit Google Drive OAuth connection via popup
-export async function connectGoogleDriveWithPopup(): Promise<{ user: FirebaseUser; accessToken?: string }> {
-  try {
-    const result = await signInWithPopup(auth, googleDriveProvider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      cachedGoogleAccessToken = credential.accessToken;
-    }
-    return { user: result.user, accessToken: credential?.accessToken };
-  } catch (error) {
-    console.error("Error connecting Google Drive:", error);
-    throw new Error(getFriendlyAuthErrorMessage(error));
-  }
+export async function connectGoogleDriveWithPopup(): Promise<{
+  user: FirebaseUser;
+  accessToken?: string;
+}> {
+  throw new Error(
+    "Firebase OAuth popup is disabled in Zero-Cost Local Mode. Use local file exports (.JSON, .DOCX, .EPUB, .HTML, .ZIP) instead."
+  );
 }
 
 export async function logOut(): Promise<void> {
   cachedGoogleAccessToken = null;
-  await signOut(auth);
 }
 
-export function onAuthUserChanged(callback: (user: FirebaseUser | null) => void) {
-  return onAuthStateChanged(auth, (user) => {
-    if (!user) {
-      cachedGoogleAccessToken = null;
-    }
-    callback(user);
-  });
+export function onAuthUserChanged(callback: (user: FirebaseUser | null) => void): () => void {
+  callback(null);
+  return () => {};
 }
 
 export function getStoredGoogleAccessToken(): string | null {
@@ -217,23 +133,14 @@ export interface UserProfileRecord {
   updatedAt?: string;
 }
 
-export async function fetchUserProfile(uid: string): Promise<UserProfileRecord | null> {
-  const path = `users/${uid}`;
+const LOCAL_PROFILE_KEY = "tomecrafter_local_profile_v1";
+
+export async function fetchUserProfile(_uid: string): Promise<UserProfileRecord | null> {
   try {
-    const snap = await getDoc(doc(db, "users", uid));
-    if (!snap.exists()) return null;
-    const data = snap.data();
-    return {
-      id: data.id,
-      email: data.email,
-      displayName: data.displayName || "",
-      photoURL: data.photoURL,
-      preferredGenre: data.preferredGenre,
-      createdAt: typeof data.createdAt?.toDate === "function" ? data.createdAt.toDate().toISOString() : data.createdAt,
-      updatedAt: typeof data.updatedAt?.toDate === "function" ? data.updatedAt.toDate().toISOString() : data.updatedAt,
-    };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, path);
+    const raw = localStorage.getItem(LOCAL_PROFILE_KEY);
+    return raw ? (JSON.parse(raw) as UserProfileRecord) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -241,43 +148,16 @@ export async function syncUserProfileToFirestore(
   user: FirebaseUser,
   updates?: { displayName?: string; preferredGenre?: string }
 ): Promise<void> {
-  if (!user.email) return;
-  const path = `users/${user.uid}`;
-  const docRef = doc(db, "users", user.uid);
-  const safeDisplayName = (
-    updates?.displayName?.trim() ||
-    user.displayName?.trim() ||
-    user.email.split("@")[0] ||
-    "Author"
-  ).slice(0, 120);
-  const rawPhotoUrl = (user.photoURL || "").trim().slice(0, 2048);
-  const safePhotoUrl = /^https?:\/\/.+/i.test(rawPhotoUrl) ? rawPhotoUrl : "";
-
+  const record: UserProfileRecord = {
+    id: user.uid,
+    email: user.email || "",
+    displayName: updates?.displayName?.trim() || user.displayName || "Author",
+    preferredGenre: updates?.preferredGenre,
+    updatedAt: new Date().toISOString(),
+  };
   try {
-    const existing = await getDoc(docRef);
-    if (!existing.exists()) {
-      const createPayload: Record<string, any> = {
-        id: user.uid,
-        email: user.email,
-        displayName: safeDisplayName,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      if (safePhotoUrl) createPayload.photoURL = safePhotoUrl;
-      if (updates?.preferredGenre) createPayload.preferredGenre = updates.preferredGenre.slice(0, 80);
-      await setDoc(docRef, createPayload);
-    } else {
-      const updatePayload: Record<string, any> = {
-        displayName: safeDisplayName,
-        updatedAt: serverTimestamp(),
-      };
-      if (safePhotoUrl) updatePayload.photoURL = safePhotoUrl;
-      if (updates?.preferredGenre !== undefined) {
-        updatePayload.preferredGenre = updates.preferredGenre.slice(0, 80);
-      }
-      await updateDoc(docRef, updatePayload);
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    localStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(record));
+  } catch {
+    // ignore storage errors
   }
 }

@@ -35,10 +35,10 @@ export const AutoSaveIndicator: React.FC<AutoSaveIndicatorProps> = ({
         disabled={status === "saving"}
         title={
           isDriveOffloaded
-            ? "Large manuscript (>1MB) offloaded to Google Drive. Click to save now."
+            ? "Large manuscript (>1MB) Drive archive mode. Click to save locally now."
             : autoSaveEnabled
-            ? "Auto-Save is ON. Click to save immediately (Ctrl/Cmd+S)."
-            : "Auto-Save is OFF (Manual Save mode). Click to save changes (Ctrl/Cmd+S)."
+            ? "Auto-Save is ON (Local Browser Storage). Click to save immediately (Ctrl/Cmd+S)."
+            : "Auto-Save is OFF (Manual Local Save mode). Click to save changes (Ctrl/Cmd+S)."
         }
         className={`inline-flex items-center space-x-2 px-2.5 py-1 rounded-full border transition-all cursor-pointer select-none disabled:cursor-wait ${
           status === "saving"
@@ -99,7 +99,7 @@ export const AutoSaveIndicator: React.FC<AutoSaveIndicatorProps> = ({
               Drive Archive
             </span>
           ) : isCloudSynced ? (
-            <span title="Firebase Cloud Synced" className="ml-0.5 hidden sm:inline-flex items-center">
+            <span title="Cloud Synced" className="ml-0.5 hidden sm:inline-flex items-center">
               <Cloud className="w-3 h-3 text-cyan-400" />
             </span>
           ) : null}

@@ -13,8 +13,8 @@ import {
   ArrowRight,
   HardDrive,
 } from "lucide-react";
-import { User as FirebaseUser } from "firebase/auth";
 import {
+  FirebaseUser,
   signInWithGoogle,
   logOut,
   fetchUserProfile,
@@ -159,12 +159,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
             <div>
               <h2 id="auth-modal-title" className="text-base font-semibold text-stone-100">
-                {currentUser ? "Author Account & Cloud Sync" : "Sign In to TomeCrafter"}
+                {currentUser ? "Author Account & Local Studio" : "Zero-Cost Local Studio Mode"}
               </h2>
               <p className="text-xs text-stone-400">
                 {currentUser
-                  ? "Manage your Firebase cloud library and author profile"
-                  : "Sync manuscripts across devices with Google & Firebase"}
+                  ? "Manage your local library and author profile"
+                  : "All paid cloud sync, Firebase Auth, and external API calls are disabled ($0/mo)"}
               </p>
             </div>
           </div>
@@ -199,70 +199,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           {!currentUser ? (
             <>
-              {/* Benefits List */}
+              {/* Zero-Cost Local Mode Summary */}
               <div className="space-y-3 bg-stone-950/60 border border-stone-800/80 rounded-xl p-4">
                 <div className="flex items-start space-x-3">
-                  <Cloud className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <HardDrive className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-xs font-semibold text-stone-200">Cloud Sync & Backup</p>
+                    <p className="text-xs font-semibold text-stone-200">Local Browser Persistence ($0 Cloud Cost)</p>
                     <p className="text-xs text-stone-400 leading-relaxed">
-                      Save and sync your chapters, world lore codex, and cover specifications to Firebase Firestore whenever you save.
+                      Your studio holds {booksCount} {booksCount === 1 ? "manuscript" : "manuscripts"} saved directly in browser storage with zero Firebase, Firestore, or Gemini billing.
                     </p>
                   </div>
                 </div>
                 <div className="flex items-start space-x-3">
-                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-xs font-semibold text-stone-200">Seamless Local Migration</p>
+                    <p className="text-xs font-semibold text-stone-200">Portable Local Backups</p>
                     <p className="text-xs text-stone-400 leading-relaxed">
-                      Any drafts already in your local studio ({booksCount} {booksCount === 1 ? "book" : "books"}) will automatically sync to your account upon sign-in.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start space-x-3">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-semibold text-stone-200">Private & Owner-Isolated</p>
-                    <p className="text-xs text-stone-400 leading-relaxed">
-                      Strict Firestore security rules ensure only your authenticated account can access your manuscripts.
+                      Use Export Book anytime to download complete Print PDF, ePub, DOCX, or Markdown files directly to your computer.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Official Google Sign-In CTA */}
               <div className="space-y-3">
                 <button
-                  onClick={handleGoogleSignIn}
-                  disabled={loading}
-                  className="w-full flex items-center justify-center space-x-3 px-4 py-3 rounded-xl bg-white hover:bg-stone-100 text-stone-900 font-semibold text-sm shadow-lg transition-all disabled:opacity-60 cursor-pointer"
-                >
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                    <path
-                      fill="#EA4335"
-                      d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.4l3.7 2.9C6.5 7.4 9 5 12 5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.6 14.7c-.2-.7-.4-1.5-.4-2.7s.2-2 .4-2.7L1.9 6.4C.7 8.8 0 10.8 0 12s.7 3.2 1.9 5.6l3.7-2.9z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.3L1.9 16c1.8 3.8 5.6 7 10.1 7z"
-                    />
-                  </svg>
-                  <span>{loading ? "Opening Google Sign-In..." : "Continue with Google"}</span>
-                </button>
-
-                <button
                   onClick={onClose}
-                  className="w-full flex items-center justify-center space-x-1.5 px-4 py-2.5 rounded-xl bg-stone-800/80 hover:bg-stone-800 border border-stone-700 text-stone-300 text-xs font-medium transition-colors cursor-pointer"
+                  className="w-full flex items-center justify-center space-x-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold transition-colors cursor-pointer"
                 >
-                  <span>Continue Locally Without Signing In</span>
+                  <span>Continue in Zero-Cost Local Mode</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>

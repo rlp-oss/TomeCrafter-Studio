@@ -43,22 +43,7 @@ import {
   FolderOpen,
   CheckCircle2,
 } from "lucide-react";
-import { apiService } from "./services/api";
-import {
-  validateFirestoreConnection,
-  onAuthUserChanged,
-  syncUserProfileToFirestore,
-  ensureAppCheckReady,
-} from "./services/firebase";
-import {
-  saveBookToFirestore,
-  subscribeToUserBooks,
-  deleteBookFromFirestore,
-  syncAllLocalBooksToCloud,
-  clearKnownCloudBooks,
-  BatchCloudSyncError,
-} from "./services/bookCloudSync";
-import { User as FirebaseUser } from "firebase/auth";
+import type { FirebaseUser } from "./services/firebase";
 
 const STORAGE_KEY = "tomecrafter_books_v1";
 const AUTO_SAVE_STORAGE_KEY = "tomecrafter_autosave_enabled_v1";
@@ -77,14 +62,13 @@ function extractReadableSaveError(err: unknown): string {
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
-  const [cloudSyncedIds, setCloudSyncedIds] = useState<Set<string>>(new Set());
-  const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+  const [currentUser] = useState<FirebaseUser | null>(null);
+  const [isAuthReady] = useState<boolean>(true);
+  const [cloudSyncedIds] = useState<Set<string>>(new Set());
+  const [isSyncingCloud] = useState<boolean>(false);
   const [dirtyBookIds, setDirtyBookIds] = useState<Set<string>>(new Set());
   const [syncErrorsByBookId, setSyncErrorsByBookId] = useState<Record<string, string>>({});
-  const [syncingBookIds, setSyncingBookIds] = useState<Set<string>>(new Set());
-  const hasMigratedInitialLocalRef = useRef<string | null>(null);
+  const [syncingBookIds] = useState<Set<string>>(new Set());
   const booksRef = useRef<Book[]>([]);
   const dirtyBookIdsRef = useRef<Set<string>>(new Set());
   const isManualSavingRef = useRef<boolean>(false);
@@ -102,30 +86,6 @@ export default function App() {
   const clearAllDirtyBooks = () => {
     dirtyBookIdsRef.current.clear();
     setDirtyBookIds(new Set());
-  };
-
-  const recordBookSyncSuccess = (bookId: string) => {
-    clearBookDirty(bookId);
-    setCloudSyncedIds((prev) => {
-      const next = new Set(prev);
-      next.add(bookId);
-      return next;
-    });
-    setSyncErrorsByBookId((prev) => {
-      if (!(bookId in prev)) return prev;
-      const next = { ...prev };
-      delete next[bookId];
-      return next;
-    });
-  };
-
-  const recordBookSyncError = (bookId: string, err: unknown) => {
-    const readable = extractReadableSaveError(err);
-    setSyncErrorsByBookId((prev) => ({
-      ...prev,
-      [bookId]: readable,
-    }));
-    return readable;
   };
 
   // Save & Auto-Save Control State (Auto-Save defaults to OFF)
@@ -247,135 +207,7 @@ export default function App() {
     }, 4000);
   };
 
-  // Initialize Firebase App Check (if runtime-configured) & Test Firestore Connection on Boot
-  useEffect(() => {
-    void ensureAppCheckReady();
-    validateFirestoreConnection().then((connected) => {
-      if (connected) {
-        console.log("Firestore database connection verified.");
-      }
-    });
-  }, []);
-
-  // Listen to Auth State Changes & Sync Profile with Firestore
-  useEffect(() => {
-    const unsubscribe = onAuthUserChanged(async (user) => {
-      setCurrentUser(user);
-      setIsAuthReady(true);
-
-      if (user) {
-        try {
-          await syncUserProfileToFirestore(user);
-        } catch (err) {
-          console.warn("Could not sync user profile to Firestore:", err);
-        }
-      } else {
-        clearKnownCloudBooks();
-        setCloudSyncedIds(new Set());
-        setSyncErrorsByBookId({});
-        setSyncingBookIds(new Set());
-        hasMigratedInitialLocalRef.current = null;
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Real-Time Firestore Subscription for User Books (Only when auth is ready and signed in)
-  useEffect(() => {
-    if (!isAuthReady || !currentUser) return;
-
-    const uid = currentUser.uid;
-    const unsubscribe = subscribeToUserBooks(
-      uid,
-      async (cloudBooks) => {
-        const cloudIds = new Set(cloudBooks.map((b) => b.id));
-        setCloudSyncedIds(cloudIds);
-
-        // One-time initial merge of local unsaved books into Firestore upon sign-in
-        if (hasMigratedInitialLocalRef.current !== uid) {
-          hasMigratedInitialLocalRef.current = uid;
-          const localBooks = booksRef.current;
-          const localOnlyBooks = localBooks.filter((lb) => !cloudIds.has(lb.id));
-
-          if (cloudBooks.length === 0 && localBooks.length > 0) {
-            setIsSyncingCloud(true);
-            try {
-              const res = await syncAllLocalBooksToCloud(localBooks, uid);
-              res.syncedIds.forEach((id) => recordBookSyncSuccess(id));
-            } catch (err) {
-              console.error("Initial cloud migration failed:", err);
-              if (err instanceof BatchCloudSyncError) {
-                err.syncedIds.forEach((id) => recordBookSyncSuccess(id));
-                err.failures.forEach((f) => recordBookSyncError(f.bookId, f.error));
-              }
-              setSaveStatus("error");
-              showTemporaryNotice(
-                `Cloud migration failed: ${extractReadableSaveError(err)}`,
-                "error"
-              );
-            } finally {
-              setIsSyncingCloud(false);
-            }
-            return;
-          }
-
-          if (localOnlyBooks.length > 0) {
-            // Merge cloud books with any custom local drafts created before sign-in
-            const nonSampleLocal = localOnlyBooks.filter(
-              (lb) => !SAMPLE_BOOKS.some((sb) => sb.id === lb.id)
-            );
-            if (nonSampleLocal.length > 0) {
-              setIsSyncingCloud(true);
-              try {
-                const res = await syncAllLocalBooksToCloud(nonSampleLocal, uid);
-                res.syncedIds.forEach((id) => recordBookSyncSuccess(id));
-              } catch (err) {
-                console.error("Local draft cloud sync failed:", err);
-                if (err instanceof BatchCloudSyncError) {
-                  err.syncedIds.forEach((id) => recordBookSyncSuccess(id));
-                  err.failures.forEach((f) => recordBookSyncError(f.bookId, f.error));
-                }
-                setSaveStatus("error");
-                showTemporaryNotice(
-                  `Cloud sync failed for local drafts: ${extractReadableSaveError(err)}`,
-                  "error"
-                );
-              } finally {
-                setIsSyncingCloud(false);
-              }
-            }
-          }
-        }
-
-        if (cloudBooks.length > 0) {
-          setBooks((prevLocal) => {
-            const mergedMap = new Map<string, Book>();
-            for (const cb of cloudBooks) {
-              mergedMap.set(cb.id, cb);
-            }
-            for (const lb of prevLocal) {
-              const existingCloud = mergedMap.get(lb.id);
-              if (existingCloud) {
-                const localTime = new Date(lb.updatedAt || 0).getTime();
-                const cloudTime = new Date(existingCloud.updatedAt || 0).getTime();
-                if (localTime > cloudTime) {
-                  mergedMap.set(lb.id, lb);
-                }
-              }
-            }
-            return Array.from(mergedMap.values()).sort(
-              (a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
-            );
-          });
-        }
-      },
-      (err) => {
-        console.warn("Firestore book subscription error:", err);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [isAuthReady, currentUser]);
+  // Zero-Cost Local Mode: No Firebase App Check, Auth listeners, or Firestore subscriptions run at boot.
 
   const handleManualSave = async () => {
     if (isManualSavingRef.current) return;
@@ -399,51 +231,10 @@ export default function App() {
         second: "2-digit",
       });
 
-      if (isAuthReady && currentUser) {
-        const idsToSave =
-          dirtyBookIdsRef.current.size > 0
-            ? Array.from(dirtyBookIdsRef.current)
-            : [activeBookId];
-
-        const syncErrors: string[] = [];
-        for (const id of idsToSave) {
-          const target = latestBooks.find((b) => b.id === id);
-          if (!target) continue;
-          setSyncingBookIds((prev) => new Set(prev).add(id));
-          try {
-            await saveBookToFirestore(target, currentUser.uid);
-            recordBookSyncSuccess(id);
-          } catch (err) {
-            console.error(`Failed saving book "${target.title}" (${id}) to cloud:`, err);
-            syncErrors.push(recordBookSyncError(id, err));
-          } finally {
-            setSyncingBookIds((prev) => {
-              const next = new Set(prev);
-              next.delete(id);
-              return next;
-            });
-          }
-        }
-
-        if (syncErrors.length > 0) {
-          setSaveStatus("error");
-          showTemporaryNotice(
-            `Saved locally, but cloud sync failed: ${syncErrors[0]}`,
-            "error"
-          );
-          return;
-        }
-
-        setLastSavedTime(formattedTime);
-        setSaveStatus("saved");
-        showTemporaryNotice("Changes saved locally and synced to cloud.", "success");
-        return;
-      }
-
       clearAllDirtyBooks();
       setLastSavedTime(formattedTime);
       setSaveStatus("saved");
-      showTemporaryNotice("Changes saved locally.", "success");
+      showTemporaryNotice("Changes saved locally ($0 Zero-Cost Mode).", "success");
     } finally {
       isManualSavingRef.current = false;
     }
@@ -496,103 +287,20 @@ export default function App() {
         second: "2-digit",
       });
 
-      if (isAuthReady && currentUser) {
-        const active = booksRef.current.find((b) => b.id === activeBookId);
-        if (active && dirtyBookIdsRef.current.has(active.id)) {
-          setSyncingBookIds((prev) => new Set(prev).add(active.id));
-          try {
-            await saveBookToFirestore(active, currentUser.uid);
-            recordBookSyncSuccess(active.id);
-            setLastSavedTime(formattedTime);
-            setSaveStatus("saved");
-          } catch (err) {
-            console.error("Auto-save cloud sync failed:", err);
-            const readable = recordBookSyncError(active.id, err);
-            setSaveStatus("error");
-            showTemporaryNotice(`Auto-save cloud sync failed: ${readable}`, "error");
-          } finally {
-            setSyncingBookIds((prev) => {
-              const next = new Set(prev);
-              next.delete(active.id);
-              return next;
-            });
-          }
-          return;
-        }
-      }
-
       clearAllDirtyBooks();
       setLastSavedTime(formattedTime);
       setSaveStatus("saved");
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [books, activeBookId, currentUser, isAuthReady, autoSaveEnabled]);
+  }, [books, activeBookId, autoSaveEnabled]);
 
   const handleManualSyncAllToCloud = async () => {
-    if (!currentUser) return;
-    setIsSyncingCloud(true);
-    try {
-      const result = await syncAllLocalBooksToCloud(books, currentUser.uid);
-      result.syncedIds.forEach((id) => recordBookSyncSuccess(id));
-      clearAllDirtyBooks();
-      setLastSavedTime(
-        new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      );
-      setSaveStatus("saved");
-      showTemporaryNotice(
-        `Synced ${result.syncedCount} manuscript(s) to Firebase Cloud.`,
-        "success"
-      );
-    } catch (err) {
-      if (err instanceof BatchCloudSyncError) {
-        err.syncedIds.forEach((id) => recordBookSyncSuccess(id));
-        err.failures.forEach((f) => recordBookSyncError(f.bookId, f.error));
-      }
-      setSaveStatus("error");
-      const readableError = extractReadableSaveError(err);
-      showTemporaryNotice(`Cloud sync failed: ${readableError}`, "error");
-      throw new Error(readableError);
-    } finally {
-      setIsSyncingCloud(false);
-    }
+    await handleManualSave();
   };
 
-  const handleSyncSingleBook = async (bookId: string) => {
-    if (!isAuthReady || !currentUser) return;
-    const target = booksRef.current.find((b) => b.id === bookId);
-    if (!target) return;
-
-    setSyncingBookIds((prev) => new Set(prev).add(bookId));
-    setSaveStatus("saving");
-    try {
-      await saveBookToFirestore(target, currentUser.uid);
-      recordBookSyncSuccess(bookId);
-      setLastSavedTime(
-        new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      );
-      setSaveStatus("saved");
-      showTemporaryNotice(`Synced "${target.title}" to Firebase Cloud.`, "success");
-    } catch (err) {
-      console.error(`Failed syncing book "${target.title}" (${bookId}):`, err);
-      const readable = recordBookSyncError(bookId, err);
-      setSaveStatus("error");
-      showTemporaryNotice(`Cloud sync failed for "${target.title}": ${readable}`, "error");
-    } finally {
-      setSyncingBookIds((prev) => {
-        const next = new Set(prev);
-        next.delete(bookId);
-        return next;
-      });
-    }
+  const handleSyncSingleBook = async () => {
+    await handleManualSave();
   };
 
   const activeBook = books.find((b) => b.id === activeBookId) || books[0] || SAMPLE_BOOKS[0];
@@ -717,36 +425,10 @@ export default function App() {
       second: "2-digit",
     });
 
-    if (isAuthReady && currentUser) {
-      setSaveStatus("saving");
-      setSyncingBookIds((prev) => new Set(prev).add(bookId));
-      try {
-        await saveBookToFirestore(updatedBook, currentUser.uid);
-        recordBookSyncSuccess(bookId);
-        setLastSavedTime(formattedTime);
-        setSaveStatus("saved");
-        showTemporaryNotice(`Updated project "${cleanTitle}" and synced to cloud.`, "success");
-      } catch (err) {
-        console.error(`Failed syncing edited project "${cleanTitle}" (${bookId}):`, err);
-        const readable = recordBookSyncError(bookId, err);
-        setSaveStatus("error");
-        showTemporaryNotice(
-          `Project "${cleanTitle}" updated locally, but cloud sync failed: ${readable}`,
-          "error"
-        );
-      } finally {
-        setSyncingBookIds((prev) => {
-          const next = new Set(prev);
-          next.delete(bookId);
-          return next;
-        });
-      }
-      return;
-    }
-
+    clearBookDirty(bookId);
     setLastSavedTime(formattedTime);
     setSaveStatus("saved");
-    showTemporaryNotice(`Updated project "${cleanTitle}".`, "success");
+    showTemporaryNotice(`Updated project "${cleanTitle}" locally.`, "success");
   };
 
   // Create New Book from Hub Modal
@@ -920,24 +602,7 @@ export default function App() {
       return next;
     });
     setPendingDeleteBook(null);
-
-    if (currentUser && cloudSyncedIds.has(targetId)) {
-      try {
-        await deleteBookFromFirestore(targetId);
-        setCloudSyncedIds((prev) => {
-          const next = new Set(prev);
-          next.delete(targetId);
-          return next;
-        });
-        showTemporaryNotice(`Deleted "${pendingDeleteBook.title}" from studio and cloud.`, "success");
-      } catch (err) {
-        console.error("Could not delete book from Firestore:", err);
-        showTemporaryNotice(
-          `Removed locally, but cloud delete failed: ${extractReadableSaveError(err)}`,
-          "error"
-        );
-      }
-    }
+    showTemporaryNotice(`Deleted "${pendingDeleteBook.title}" locally.`, "success");
   };
 
   if (showLandingPage) {

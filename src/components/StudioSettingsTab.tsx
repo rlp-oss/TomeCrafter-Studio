@@ -32,7 +32,7 @@ import {
   LogOut,
   Database,
 } from "lucide-react";
-import { User as FirebaseUser } from "firebase/auth";
+import type { FirebaseUser } from "../services/firebase";
 import { Book, StudioSettings, StudioLogoMeta } from "../types";
 import {
   compressBookForFirestore,
@@ -1234,29 +1234,29 @@ export const StudioSettingsTab: React.FC<StudioSettingsTabProps> = ({
             </div>
           </form>
 
-          {/* Access Control & RBAC Reference Card */}
+          {/* Local Studio Storage Matrix */}
           <div className="p-5 rounded-3xl bg-stone-950 border border-stone-800 space-y-3 text-xs">
             <div className="flex items-center justify-between">
               <span className="font-serif font-bold text-stone-200 flex items-center space-x-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>Firebase RBAC Access Matrix</span>
+                <span>Studio Storage Mode</span>
               </span>
-              <span className="text-[10px] font-mono text-emerald-300">Enforced by Security Rules</span>
+              <span className="text-[10px] font-mono text-emerald-300">Zero-Cost Local Mode ($0/mo)</span>
             </div>
 
             <div className="space-y-2 text-[11px] text-stone-400">
               <div className="flex items-center justify-between p-2 rounded-xl bg-stone-900 border border-stone-800/80">
-                <span>Primary Studio Admin:</span>
-                <span className="font-mono text-emerald-300 font-bold">{PRIMARY_ADMIN_EMAIL}</span>
+                <span>Primary Storage Target:</span>
+                <span className="font-mono text-emerald-300 font-bold">Browser localStorage (Local Device)</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded-xl bg-stone-900 border border-stone-800/80">
-                <span>Storage Bucket Target:</span>
-                <span className="font-mono text-stone-300">gen-lang-client-0309459920.firebasestorage.app</span>
+                <span>Cloud Storage / Firestore Sync:</span>
+                <span className="font-mono text-stone-300">Disabled to prevent billing</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded-xl bg-stone-900 border border-stone-800/80">
-                <span>Upload Permission:</span>
-                <span className={`font-mono font-bold ${isAuthorized ? "text-emerald-300" : "text-amber-400"}`}>
-                  {isAuthorized ? "✓ GRANTED (Signed in as Administrator)" : "✗ RESTRICTED (Sign in required)"}
+                <span>Local Branding Customization:</span>
+                <span className="font-mono font-bold text-emerald-300">
+                  ✓ GRANTED (Local Studio Mode)
                 </span>
               </div>
             </div>

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { LogIn, LogOut, Cloud, ChevronDown, User as UserIcon, HardDrive, ShieldCheck } from "lucide-react";
-import { logOut, onAuthUserChanged } from "../services/firebase";
-import { User as FirebaseUser } from "firebase/auth";
+import { FirebaseUser, logOut, onAuthUserChanged } from "../services/firebase";
 
 interface GoogleAuthButtonProps {
   onDriveClick?: () => void;
@@ -129,10 +128,10 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
     <button
       onClick={onOpenAuthModal}
       className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-stone-800 hover:bg-stone-700 border border-stone-700 text-stone-200 text-xs font-medium transition-all shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
-      title="Sign in to sync manuscripts across devices"
+      title="Zero-Cost Local Mode active ($0 cloud billing)"
     >
-      <LogIn className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-      <span>Sign In</span>
+      <HardDrive className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+      <span>Local Mode ($0)</span>
     </button>
   );
 };

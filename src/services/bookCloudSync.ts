@@ -1,13 +1,4 @@
-import {
-  collection,
-  doc,
-  deleteDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  where,
-} from "firebase/firestore";
-import { auth, db, handleFirestoreError, OperationType } from "./firebase";
+// Zero-Cost Local Mode: Firestore subscriptions, batch syncs, and cloud reads/writes removed.
 import { Book } from "../types";
 import {
   compressBookForFirestore,
@@ -19,19 +10,13 @@ import {
   DocumentSizeValidation,
   FIRESTORE_MAX_DOCUMENT_BYTES,
   FIRESTORE_SAFE_THRESHOLD_BYTES,
-  SUBCOLLECTION_STUB_VERSION,
 } from "./dataCompression";
 import {
   detectFirestoreOverflow,
   executeGoogleDriveOffload,
   syncBookWithAutoDriveOffload,
   loadBookWithDriveResolution,
-  hydrateBookData,
-  fetchSubcollectionChapters,
-  deleteBookChaptersSubcollection,
-  markBookKnownInCloud,
   clearKnownCloudBooks,
-  sanitizeBookId,
   OffloadDetectionResult,
   OffloadExecutionResult,
 } from "./driveOffloadService";
@@ -64,8 +49,8 @@ export function prepareBookForFirestore(book: Book): Record<string, any> {
 }
 
 export async function saveBookToFirestore(
-  book: Book,
-  userId: string
+  _book: Book,
+  _userId: string
 ): Promise<{
   success: boolean;
   actionTaken?: "saved_to_firestore" | "offloaded_to_drive" | "failed";
@@ -74,119 +59,32 @@ export async function saveBookToFirestore(
   offloadResult?: OffloadExecutionResult;
   error?: string;
 }> {
-  const offloadResult = await syncBookWithAutoDriveOffload(book, userId);
-  if (!offloadResult.success) {
-    throw new Error(offloadResult.error || offloadResult.message || "Failed to save book to Firestore.");
-  }
   return {
-    success: true,
-    actionTaken: offloadResult.actionTaken,
-    offloadResult,
+    success: false,
+    actionTaken: "failed",
+    error: "Firestore cloud sync is disabled in Zero-Cost Local Mode.",
   };
 }
 
-export async function loadBookFromFirestore(bookId: string): Promise<Book | null> {
-  try {
-    const { book } = await loadBookWithDriveResolution(bookId);
-    return book;
-  } catch (err) {
-    console.warn(`[CloudSync] Error loading book "${bookId}":`, err);
-    return null;
-  }
+export async function loadBookFromFirestore(_bookId: string): Promise<Book | null> {
+  return null;
 }
 
-/**
- * Fetches all books belonging to the authenticated user from Firestore.
- */
-export async function fetchUserBooksFromFirestore(userId: string): Promise<Book[]> {
-  const path = "books";
-  try {
-    const q = query(collection(db, path), where("userId", "==", userId));
-    const snapshot = await getDocs(q);
-    const books = await Promise.all(
-      snapshot.docs.map(async (docSnap) => {
-        markBookKnownInCloud(docSnap.id);
-        const data = docSnap.data();
-        if (data._stubVersion === SUBCOLLECTION_STUB_VERSION && !data.isOffloadedToDrive) {
-          const subChapters = await fetchSubcollectionChapters(docSnap.id, userId);
-          return hydrateBookData(docSnap.id, data, subChapters);
-        }
-        return hydrateBookData(docSnap.id, data);
-      })
-    );
-    return books.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
-  }
+export async function fetchUserBooksFromFirestore(_userId: string): Promise<Book[]> {
+  return [];
 }
 
-/**
- * Subscribes in real-time to all books owned by the authenticated user.
- */
 export function subscribeToUserBooks(
-  userId: string,
+  _userId: string,
   onBooks: (books: Book[]) => void,
-  onError?: (err: Error) => void
+  _onError?: (err: Error) => void
 ): () => void {
-  const path = "books";
-  const q = query(collection(db, path), where("userId", "==", userId));
-  let snapshotVersion = 0;
-
-  return onSnapshot(
-    q,
-    async (snapshot) => {
-      const currentVersion = ++snapshotVersion;
-      try {
-        const cloudBooks = await Promise.all(
-          snapshot.docs.map(async (docSnap) => {
-            markBookKnownInCloud(docSnap.id);
-            const data = docSnap.data();
-            if (data._stubVersion === SUBCOLLECTION_STUB_VERSION && !data.isOffloadedToDrive) {
-              const subChapters = await fetchSubcollectionChapters(docSnap.id, userId);
-              return hydrateBookData(docSnap.id, data, subChapters);
-            }
-            return hydrateBookData(docSnap.id, data);
-          })
-        );
-        if (currentVersion !== snapshotVersion) return;
-        cloudBooks.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-        onBooks(cloudBooks);
-      } catch (err) {
-        if (currentVersion !== snapshotVersion) return;
-        if (onError && err instanceof Error) {
-          onError(err);
-        }
-      }
-    },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, path);
-      } catch (wrapped) {
-        if (onError && wrapped instanceof Error) {
-          onError(wrapped);
-        }
-      }
-    }
-  );
+  onBooks([]);
+  return () => {};
 }
 
-/**
- * Deletes a book document and its chapter subcollection documents from Firestore.
- */
-export async function deleteBookFromFirestore(bookId: string): Promise<void> {
-  const safeId = sanitizeBookId(bookId);
-  const path = `books/${safeId}`;
-  try {
-    await deleteBookChaptersSubcollection(safeId, auth.currentUser?.uid || "");
-    await deleteDoc(doc(db, "books", safeId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
-}
+export async function deleteBookFromFirestore(_bookId: string): Promise<void> {}
 
-/**
- * Syncs an array of local books to the user's Firestore account.
- */
 export class BatchCloudSyncError extends Error {
   syncedCount: number;
   failedCount: number;
@@ -208,30 +106,8 @@ export class BatchCloudSyncError extends Error {
 }
 
 export async function syncAllLocalBooksToCloud(
-  books: Book[],
-  userId: string
+  _books: Book[],
+  _userId: string
 ): Promise<{ syncedCount: number; failedCount: number; syncedIds: string[] }> {
-  const syncedIds: string[] = [];
-  const failures: { bookId: string; title: string; error: string }[] = [];
-
-  for (const book of books) {
-    try {
-      await saveBookToFirestore(book, userId);
-      syncedIds.push(book.id);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[CloudSync] Failed syncing book "${book.title}" (${book.id}):`, err);
-      failures.push({ bookId: book.id, title: book.title, error: msg });
-    }
-  }
-
-  if (failures.length > 0) {
-    throw new BatchCloudSyncError(
-      `Failed to sync ${failures.length} of ${books.length} manuscript(s) to Firestore.`,
-      syncedIds,
-      failures
-    );
-  }
-
-  return { syncedCount: syncedIds.length, failedCount: 0, syncedIds };
+  return { syncedCount: 0, failedCount: 0, syncedIds: [] };
 }

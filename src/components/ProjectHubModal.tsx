@@ -26,6 +26,7 @@ import {
   CloudOff,
   AlertCircle,
   RefreshCw,
+  HardDrive,
 } from "lucide-react";
 import { Book, Genre } from "../types";
 import { apiService } from "../services/api";
@@ -906,14 +907,10 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                               {cloudHealth === "local_only" && (
                                 <span
                                   className="inline-flex items-center space-x-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-stone-800/90 text-stone-300 border border-stone-600/80"
-                                  title={
-                                    isCloudAuthenticated
-                                      ? "Saved in this browser only; not yet synced to Firebase Cloud."
-                                      : "Saved in this browser only. Sign in to sync to Firebase Cloud."
-                                  }
+                                  title="Saved locally in this browser (Zero-Cost Local Mode). Export JSON/PDF/ePub anytime for portable backups."
                                 >
-                                  <CloudOff className="w-3 h-3 text-stone-400" />
-                                  <span>Local Only</span>
+                                  <HardDrive className="w-3 h-3 text-emerald-400" />
+                                  <span>Saved Locally</span>
                                 </span>
                               )}
                             </div>

@@ -64,11 +64,14 @@ export const AudiobookStudioTab: React.FC<AudiobookStudioTabProps> = ({
   // Available Browser Voices
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   
-  // Settings
+  // Settings (forced to free browser Device TTS in Zero-Cost Mode)
   const [settings, setSettings] = useState<AudiobookSettings>(() => {
     try {
       const saved = localStorage.getItem(`tomecrafter_audiobook_settings_${book.id}`);
-      return saved ? JSON.parse(saved) : DEFAULT_AUDIOBOOK_SETTINGS;
+      if (saved) {
+        return { ...DEFAULT_AUDIOBOOK_SETTINGS, ...JSON.parse(saved), voiceEngine: "browser" };
+      }
+      return DEFAULT_AUDIOBOOK_SETTINGS;
     } catch {
       return DEFAULT_AUDIOBOOK_SETTINGS;
     }
@@ -262,33 +265,12 @@ export const AudiobookStudioTab: React.FC<AudiobookStudioTabProps> = ({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Verify ElevenLabs API Key via Server Proxy
   const handleVerifyElevenLabsKey = async () => {
-    if (!tempApiKey.trim()) {
-      showToast("Please enter an API key to verify.");
-      return;
-    }
-    setIsVerifyingKey(true);
-    setKeyVerifyResult(null);
-    try {
-      const res = await fetch("/api/audio/elevenlabs/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: tempApiKey.trim() }),
-      });
-      const data = await res.json();
-      setKeyVerifyResult(data);
-      if (data.valid) {
-        showToast("ElevenLabs Key successfully connected & verified!");
-      } else {
-        showToast(data.message || "Invalid ElevenLabs API key.");
-      }
-    } catch (err: any) {
-      setKeyVerifyResult({ valid: false, message: err.message || "Network error verifying key." });
-      showToast("Failed to verify key with server.");
-    } finally {
-      setIsVerifyingKey(false);
-    }
+    setKeyVerifyResult({
+      valid: false,
+      message: "ElevenLabs API calls are disabled in Zero-Cost Mode. Use free Device TTS.",
+    });
+    showToast("Paid ElevenLabs API is disabled in Zero-Cost Mode.");
   };
 
   // Play / Pause Speech Narration (Supports both synthesized audio files and browser speech)
@@ -878,61 +860,39 @@ export const AudiobookStudioTab: React.FC<AudiobookStudioTabProps> = ({
 
         {/* Engine Selector Header Toolbar */}
         <div className="mt-6 pt-4 border-t border-stone-800/80 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-wrap gap-y-2">
             <span className="text-xs font-mono text-stone-400">Synthesis Engine:</span>
             <div className="inline-flex rounded-xl bg-stone-950 border border-stone-800 p-1">
               <button
                 type="button"
-                onClick={() => setSettings((s) => ({ ...s, voiceEngine: "gemini" }))}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  settings.voiceEngine === "gemini"
-                    ? "bg-gradient-to-r from-amber-500 to-amber-600 text-stone-950 font-bold shadow"
-                    : "text-stone-400 hover:text-stone-200"
-                }`}
+                disabled
+                title="Disabled in Zero-Cost Mode to prevent Gemini TTS billing"
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-600 cursor-not-allowed line-through"
               >
                 <Zap className="w-3.5 h-3.5" />
-                <span>Gemini 3.1 Neural AI (Default)</span>
+                <span>Gemini TTS (Disabled)</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setSettings((s) => ({ ...s, voiceEngine: "elevenlabs" }))}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  settings.voiceEngine === "elevenlabs"
-                    ? "bg-gradient-to-r from-orange-500 to-rose-600 text-stone-950 font-bold shadow"
-                    : "text-stone-400 hover:text-stone-200"
-                }`}
+                disabled
+                title="Disabled in Zero-Cost Mode to prevent ElevenLabs billing"
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-600 cursor-not-allowed line-through"
               >
                 <Flame className="w-3.5 h-3.5" />
-                <span>ElevenLabs Studio</span>
+                <span>ElevenLabs (Disabled)</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setSettings((s) => ({ ...s, voiceEngine: "browser" }))}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  settings.voiceEngine === "browser"
-                    ? "bg-stone-700 text-stone-100 font-bold shadow"
-                    : "text-stone-400 hover:text-stone-200"
-                }`}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 shadow"
               >
                 <Cpu className="w-3.5 h-3.5" />
-                <span>Device TTS</span>
+                <span>Device Web Speech (Free • Active)</span>
               </button>
             </div>
           </div>
-
-          {settings.voiceEngine === "elevenlabs" && (
-            <button
-              onClick={() => setShowApiKeyModal(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-orange-950/80 hover:bg-orange-900 border border-orange-500/40 text-orange-300 text-xs font-semibold transition-colors"
-            >
-              <Key className="w-3.5 h-3.5" />
-              <span>
-                {settings.elevenLabsApiKey ? "✓ ElevenLabs Key Active" : "Add ElevenLabs API Key"}
-              </span>
-            </button>
-          )}
         </div>
 
         {/* Progress Bar during batch generation */}

@@ -25,8 +25,7 @@ import {
   Star,
   Check,
 } from "lucide-react";
-import { User as FirebaseUser } from "firebase/auth";
-import { signInWithGoogle, logOut } from "../services/firebase";
+import { FirebaseUser, signInWithGoogle, logOut } from "../services/firebase";
 
 interface LandingPageProps {
   currentUser: FirebaseUser | null;
@@ -130,8 +129,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               disabled={authLoading}
               className="flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 border border-stone-700 text-stone-200 text-xs font-medium transition-all shadow-sm cursor-pointer"
             >
-              <LogIn className="w-3.5 h-3.5 text-amber-400" />
-              <span>{authLoading ? "Connecting..." : "Sign In"}</span>
+              <Lock className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Local Mode ($0)</span>
             </button>
           )}
 
